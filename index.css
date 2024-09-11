@@ -1,104 +1,228 @@
-*{
-    margin:0;
-    padding:0;
-    box-sizing:border-box
+/* Font and Layout Setup */
+body {
+    font-family: 'Roboto', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f9;
+    color: #333;
+    line-height: 1.6;
+    overflow-x: hidden;
 }
-body{
-    font-family:'Open Sans',Arial,sans-serif;
-    background:#f4f4f4;
-    color:#333;
-    line-height:1.8;
-    padding:20px;
-    max-width:1200px;
-    margin:auto
+
+h1, h2, h3 {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 600;
 }
-header{
-    text-align:center;
-    margin-bottom:30px
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 20px;
 }
-header h1{
-    font-size:40px;
-    color:#0056b3;
-    margin-bottom:10px
+
+/* Hero Section */
+.hero {
+    background: linear-gradient(135deg, #2d9cdb, #0052cc);
+    color: white;
+    padding: 100px 0;
+    position: relative;
+    text-align: center;
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
-header p{
-    font-size:18px;
-    margin-bottom:15px
+
+.scroll-down {
+    position: absolute;
+    bottom: 20px;
+    width: 100%;
+    text-align: center;
+    font-size: 1.5em;
+    animation: bounce 2s infinite;
+    color: white;
 }
-header a{
-    color:#0056b3;
-    text-decoration:none;
-    font-weight:700
-}
-header a:hover{
-    text-decoration:underline
-}
-section{
-    margin-bottom:40px;
-    padding:20px;
-    background:#fff;
-    border-radius:8px;
-    box-shadow:0 2px 10px rgba(0,0,0,.1)
-}
-h2{
-    font-size:28px;
-    color:#333;
-    border-bottom:2px solid #0056b3;
-    padding-bottom:10px;
-    margin-bottom:20px
-}
-li,p{
-    font-size:16px;
-    margin-bottom:10px
-}
-ul{
-    list-style:none;
-    padding-left:0
-}
-ul li{
-    padding:5px 0
-}
-.ei,.ji{
-    margin-bottom:20px
-}
-.ei h3,.ji h3{
-    font-size:22px;
-    color:#0056b3
-}
-.ei p,.ji p{
-    font-size:16px
-}
-footer{
-    text-align:center;
-    padding:15px;
-    background:#333;
-    color:#fff;
-    margin-top:40px
-}
-footer a{
-    color:#fff;
-    text-decoration:underline
-}
-.certifications a{
-    color:#007bff;
-    font-weight:700
-}
-.certifications a:hover{
-    text-decoration:underline;
-    color:#0056b3
-}
-@media (max-width:768px){
-    body{
-        padding:15px
+
+/* Keyframes for bounce animation */
+@keyframes bounce {
+    0%, 100% {
+        transform: translateY(0);
     }
-    header h1{
-        font-size:32px
-    }
-    h2{
-        font-size:24px
-    }
-    li,p{
-        font-size:14px
+    50% {
+        transform: translateY(-10px);
     }
 }
- 
+
+.hero .title {
+    font-size: 3.5em;
+    margin-bottom: 20px;
+}
+
+.subtitle a {
+    color: #f3c623;
+    text-decoration: none;
+}
+
+.subtitle a:hover {
+    color: #fff;
+}
+
+/* Social Links */
+.social-links a {
+    color: #fff;
+    margin: 0 10px;
+    font-size: 1.2em;
+    display: inline-block;
+    transition: color 0.3s;
+}
+
+.social-links a:hover {
+    color: #f3c623;
+}
+
+/* Waves between sections */
+.wave-divider {
+    height: 100px;
+    background: url('wave-top.svg');
+    background-size: cover;
+    background-position: center;
+}
+
+.wave-divider-reverse {
+    height: 100px;
+    background: url('wave-bottom.svg');
+    background-size: cover;
+    background-position: center;
+}
+
+/* Sections */
+section {
+    padding: 80px 0;
+}
+
+h2 {
+    text-align: center;
+    font-size: 2.5em;
+    margin-bottom: 30px;
+    color: #0052cc;
+}
+
+p {
+    font-size: 1.2em;
+    text-align: center;
+    max-width: 900px;
+    margin: 20px auto;
+}
+
+/* Education and Experience */
+.experience-item, .achievement-item, .education-item {
+    background-color: white;
+    padding: 30px;
+    border-radius: 12px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+    text-align: center; /* Center-align company names */
+}
+
+.experience-item:hover, .achievement-item:hover {
+    transform: translateY(-10px);
+}
+
+
+.education-item:hover, .experience-item:hover {
+    transform: translateY(-10px);
+}
+
+h3 {
+    color: #2d9cdb;
+    text-align: center;
+}
+
+/* Skills Section */
+.skills-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.skill-card {
+    background-color: white;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+    text-align: center;
+    grid-row-start: 1;
+    grid-row-end: 4;
+}
+.security-practices {
+    grid-column-start: 3;
+    grid-column-end: 4;
+    grid-row-start: 1;
+    grid-row-end: 2;
+}
+.certifications {
+    grid-column-start: 3;
+    grid-column-end: 4;
+    grid-row-start: 3;
+    grid-row-end: 4;
+    padding-top: 0;
+}
+.skill-card p {
+    white-space: pre-line;
+}
+
+
+.skill-card:hover {
+    transform: translateY(-10px);
+}
+
+.skill-card h3 {
+    color: #0052cc;
+    margin-bottom: 15px;
+}
+
+/* Footer */
+footer {
+    background-color: #333;
+    color: white;
+    text-align: center;
+    padding: 20px;
+}
+
+/* Animations */
+.fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s ease-out;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .hero .title {
+        font-size: 2.5em;
+    }
+    .social-links a {
+        display: block;
+        margin: 10px 0;
+    }
+    .skills-grid {
+        grid-template-columns: 1fr; /* Stack all cards vertically */
+        gap: 20px; /* Adjust the gap between cards */
+    }
+    .skill-card {
+        grid-column: 1; /* Ensure each card takes the full width */
+        grid-row: auto; /* Allow cards to stack naturally */
+    }
+}
+.fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s ease-out;
+}
+
+.appear {
+    opacity: 1;
+    transform: translateY(0);
+}
