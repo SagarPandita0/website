@@ -76,20 +76,6 @@ h1, h2, h3 {
     color: #f3c623;
 }
 
-.wave-divider {
-    height: 100px;
-    background: url('wave-top.svg');
-    background-size: cover;
-    background-position: center;
-}
-
-.wave-divider-reverse {
-    height: 100px;
-    background: url('wave-bottom.svg');
-    background-size: cover;
-    background-position: center;
-}
-
 section {
     padding: 80px 0;
 }
