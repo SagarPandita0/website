@@ -1,5 +1,6 @@
 {
   "name": "website",
+  "homepage": "https://sagarpandita.com",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
@@ -27,5 +28,4 @@
     "preview": "vite preview",
     "deploy": "vite build && gh-pages -d dist"
   }
-,"homepage": "https://SagarPandita0.github.io/website"
 }
