@@ -2,12 +2,237 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sagar Pandita</title>
-    <script type="module" crossorigin src="/assets/index-D0nUSDNQ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DTAq1Csh.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="root"></div>
+    <main>
+      <div class="page-shell">
+        <header class="hero">
+          <p class="eyebrow">Offensive Security Engineer</p>
+          <h1>Sagar Pandita</h1>
+          <div class="hero-buttons">
+            <a
+              class="button primary"
+              href="https://medium.com/@panditasagar"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Blogs</a
+            >
+            <a
+              class="button"
+              href="https://www.linkedin.com/in/sagar-pandita/"
+              target="_blank"
+              rel="noopener noreferrer"
+              >LinkedIn</a
+            >
+          </div>
+        </header>
+
+        <section id="experience" class="section">
+          <div class="section-header">
+            <p class="label">Experience</p>
+          </div>
+          <div class="experience-list">
+            <article class="experience-item">
+              <h3 class="role">Associate, Offensive Security Engineer</h3>
+              <span class="company">Galaxy Digital Services</span>
+              <p class="experience-date">Oct 2024 – Present</p>
+            </article>
+            <article class="experience-item">
+              <h3 class="role">Security Engineer</h3>
+              <span class="company">DVIs Software Services Inc.</span>
+              <p class="experience-date">Jul 2024 – Oct 2024</p>
+            </article>
+            <article class="experience-item">
+              <h3 class="role">Security Engineer</h3>
+              <span class="company">Software Engineering Institute</span>
+              <p class="experience-date">Jan 2024 – May 2024</p>
+            </article>
+            <article class="experience-item">
+              <h3 class="role">Security Engineer</h3>
+              <span class="company">Network Contagion Research Institute</span>
+              <p class="experience-date">Jun 2023 – Aug 2023</p>
+            </article>
+            <article class="experience-item">
+              <h3 class="role">Security Engineer</h3>
+              <span class="company">DVIs Software Services Inc.</span>
+              <p class="experience-date">Jun 2023 – Aug 2023</p>
+            </article>
+            <article class="experience-item">
+              <h3 class="role">Software Security Engineer</h3>
+              <span class="company">Willis Towers Watson</span>
+              <p class="experience-date">Aug 2020 – Aug 2022</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="skills" class="section">
+          <div class="section-header">
+            <p class="label">Skills</p>
+          </div>
+          <div class="skills-grid">
+            <div>
+              <h3>Programming</h3>
+              <div class="chips">
+                <span class="chip">Python</span>
+                <span class="chip">Java</span>
+                <span class="chip">C</span>
+                <span class="chip">PHP</span>
+                <span class="chip">JavaScript</span>
+                <span class="chip">TypeScript</span>
+                <span class="chip">Node.js</span>
+                <span class="chip">Assembly (x86)</span>
+              </div>
+            </div>
+            <div>
+              <h3>Security Tools</h3>
+              <div class="chips">
+                <span class="chip">Wireshark</span>
+                <span class="chip">Burp Suite</span>
+                <span class="chip">Metasploit</span>
+                <span class="chip">Ghidra</span>
+              </div>
+            </div>
+            <div>
+              <h3>Databases</h3>
+              <div class="chips">
+                <span class="chip">MySQL</span>
+                <span class="chip">PostgreSQL</span>
+                <span class="chip">MongoDB</span>
+                <span class="chip">Redis</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="education" class="section">
+          <div class="section-header">
+            <p class="label">Education & Certification</p>
+          </div>
+          <article class="education-item">
+            <header>
+              <h3>Carnegie Mellon University</h3>
+            </header>
+            <p class="muted">
+              Master of Science in Information Security, GPA 3.8 / 4.0
+            </p>
+            <p class="education-date">Aug 2022 – May 2024</p>
+          </article>
+          <article class="education-item">
+            <header>
+              <h3>
+                <a
+                  href="https://www.credential.net/e6659e59-44c9-4b71-bee0-39a03a5dc50b#acc.NvPeTn14"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Offensive Security Certified Professional (OSCP)</a
+                >
+              </h3>
+            </header>
+            <p class="muted">Issued by Offensive Security.</p>
+            <p class="education-date">Achieved 2024</p>
+          </article>
+        </section>
+
+        <section id="writing" class="section">
+          <div class="section-header">
+            <p class="label">Writing</p>
+          </div>
+          <div class="post-list">
+            <article class="post" id="sql-injection-primer">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/escape-characters-not-responsibilities-an-sql-injection-primer-ca581e9dde03"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Escape Characters, Not Responsibilities: An SQL Injection
+                  Primer</a
+                >
+              </h3>
+              <p>
+                SQL injection, the ancient trick still crashing modern apps; learn how attackers turn your inputs into open doors and the boring fixes that actually stop them.
+              </p>
+              <small class="muted">Published September 2025</small>
+            </article>
+            <article class="post" id="prototype-conundrum">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/javascript-prototype-conundrum"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >JavaScript Prototype Conundrum</a
+                >
+              </h3>
+              <p>
+                A playful walkthrough of prototype pollution in JavaScript and
+                how defenders can spot it.
+              </p>
+              <small class="muted">Published July 2025</small>
+            </article>
+            <article class="post" id="nearest-neighbor">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/the-nearest-neighbor-attack"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >The Nearest Neighbor Attack: Fancy Bear’s Wi-Fi Hijinks and
+                  What We Can Learn</a
+                >
+              </h3>
+              <p>
+                Breakdown of how Fancy Bear abused neighboring Wi-Fi networks
+                and what defenders should watch for.
+              </p>
+              <small class="muted">Published December 2024</small>
+            </article>
+            <article class="post" id="amsi-bypass">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/understanding-amsi-bypass-techniques-on-windows"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Understanding AMSI Bypass Techniques on Windows</a
+                >
+              </h3>
+              <p>
+                Educational overview of modern AMSI bypass strategies with
+                defensive implications.
+              </p>
+              <small class="muted">Published September 2024</small>
+            </article>
+            <article class="post" id="yubikey-cloning">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/yubikeys-vulnerable-to-cloning-attacks"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >YubiKeys Vulnerable to Cloning Attacks, But Should You
+                  Worry?</a
+                >
+              </h3>
+              <p>
+                Evaluates reported YubiKey cloning research and frames realistic
+                risk for hardware-based MFA.
+              </p>
+              <small class="muted">Published September 2024</small>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer__inner">
+        <span>© 2025 Sagar Pandita</span>
+      </div>
+    </footer>
   </body>
 </html>
