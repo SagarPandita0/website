@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sagar Pandita</title>
+    <meta name="description" content="Sagar Pandita - Offensive Security Engineer. Read articles on security research, AI safety, cybersecurity, and offensive security on Medium." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -160,7 +161,31 @@
           <div class="section-header">
             <p class="label">Writing</p>
           </div>
+          <input
+            type="text"
+            id="search-posts"
+            class="search-input"
+            placeholder="Search articles..."
+            aria-label="Search articles"
+          />
+          <p id="no-results" class="no-results">No articles found</p>
           <div class="post-list">
+            <article class="post" id="router-nginx">
+              <h3>
+                <a
+                  href="https://medium.com/@panditasagar/the-day-the-router-met-nginx-when-mixture-of-experts-crashed-the-systems-engineering-party-333dc3034fec"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >The Day the Router Met Nginx: When Mixture of Experts Crashed
+                  the Systems Engineering Party</a
+                >
+              </h3>
+              <p>
+                A deep dive into systems engineering chaos when a router meets
+                Nginx and MoE architecture walks into the party.
+              </p>
+              <small class="muted">Published February 2026 · 5 min read</small>
+            </article>
             <article class="post" id="sql-injection-primer">
               <h3>
                 <a
@@ -174,7 +199,7 @@
               <p>
                 SQL injection, the ancient trick still crashing modern apps; learn how attackers turn your inputs into open doors and the boring fixes that actually stop them.
               </p>
-              <small class="muted">Published September 2025</small>
+              <small class="muted">Published September 2025 · 4 min read</small>
             </article>
             <article class="post" id="prototype-conundrum">
               <h3>
@@ -189,7 +214,7 @@
                 A playful walkthrough of prototype pollution in JavaScript and
                 how defenders can spot it.
               </p>
-              <small class="muted">Published July 2025</small>
+              <small class="muted">Published July 2025 · 6 min read</small>
             </article>
             <article class="post" id="nearest-neighbor">
               <h3>
@@ -205,22 +230,7 @@
                 Breakdown of how Fancy Bear abused neighboring Wi-Fi networks
                 and what defenders should watch for.
               </p>
-              <small class="muted">Published December 2024</small>
-            </article>
-            <article class="post" id="amsi-bypass">
-              <h3>
-                <a
-                  href="https://medium.com/@panditasagar/understanding-amsi-bypass-techniques-on-windows-an-educational-overview-615c4ab8df8a"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >Understanding AMSI Bypass Techniques on Windows</a
-                >
-              </h3>
-              <p>
-                Educational overview of modern AMSI bypass strategies with
-                defensive implications.
-              </p>
-              <small class="muted">Published September 2024</small>
+              <small class="muted">Published December 2024 · 3 min read</small>
             </article>
             <article class="post" id="yubikey-cloning">
               <h3>
@@ -236,7 +246,7 @@
                 Evaluates reported YubiKey cloning research and frames realistic
                 risk for hardware-based MFA.
               </p>
-              <small class="muted">Published September 2024</small>
+              <small class="muted">Published September 2024 · 4 min read</small>
             </article>
           </div>
         </section>
@@ -245,8 +255,46 @@
 
     <footer class="site-footer">
       <div class="site-footer__inner">
-        <span>© 2025 Sagar Pandita</span>
+        <span>© 2026 Sagar Pandita</span>
       </div>
     </footer>
+
+    <script>
+      (function() {
+        var searchInput = document.getElementById('search-posts');
+        var noResults = document.getElementById('no-results');
+        var posts = document.querySelectorAll('.post');
+
+        function escapeHtml(str) {
+          var div = document.createElement('div');
+          div.textContent = str;
+          return div.innerHTML;
+        }
+
+        function normalizeText(str) {
+          return str.toLowerCase().replace(/[^\w\s]/g, '');
+        }
+
+        searchInput.addEventListener('input', function(e) {
+          var query = normalizeText(escapeHtml(e.target.value));
+          var visibleCount = 0;
+
+          posts.forEach(function(post) {
+            var title = post.querySelector('h3').textContent;
+            var desc = post.querySelector('p').textContent;
+            var combined = normalizeText(title + ' ' + desc);
+
+            if (combined.indexOf(query) !== -1 || query === '') {
+              post.style.display = '';
+              visibleCount++;
+            } else {
+              post.style.display = 'none';
+            }
+          });
+
+          noResults.style.display = visibleCount === 0 ? 'block' : 'none';
+        });
+      })();
+    </script>
   </body>
 </html>
