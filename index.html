@@ -5,19 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sagar Pandita</title>
     <meta name="description" content="Sagar Pandita - Offensive Security Engineer. Read articles on security research, AI safety, cybersecurity, and offensive security on Medium." />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://sagarpandita.com/" />
+    <meta property="og:title" content="Sagar Pandita" />
+    <meta
+      property="og:description"
+      content="Sagar Pandita - Offensive Security Engineer. Read articles on security research, AI safety, cybersecurity, and offensive security on Medium."
+    />
+    <meta name="twitter:card" content="summary" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400&display=swap"
-      rel="stylesheet"
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230b0d10'/%3E%3Cpath%20d='M9%2011l5%205-5%205'%20fill='none'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M17%2021h6'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <main id="content">
       <div class="page-shell">
         <header class="hero">
-          <p class="eyebrow">Offensive Security Engineer</p>
+          <p class="eyebrow">
+            <span class="prompt" aria-hidden="true">$</span>Offensive Security
+            Engineer
+          </p>
           <h1>Sagar Pandita</h1>
           <div class="hero-buttons">
             <a
@@ -35,6 +47,20 @@
               >LinkedIn</a
             >
           </div>
+          <ul class="stats">
+            <li class="stat">
+              <span class="stat-value" id="years-exp">4+</span>
+              <span class="stat-label">yrs full-time</span>
+            </li>
+            <li class="stat">
+              <span class="stat-value">OSWE · OSCP</span>
+              <span class="stat-label">certifications</span>
+            </li>
+            <li class="stat">
+              <span class="stat-value">CMU</span>
+              <span class="stat-label">MS information security</span>
+            </li>
+          </ul>
         </header>
 
         <section id="experience" class="section">
@@ -42,7 +68,7 @@
             <p class="label">Experience</p>
           </div>
           <div class="experience-list">
-            <article class="experience-item">
+            <article class="experience-item is-current">
               <h3 class="role">Associate, Offensive Security Engineer</h3>
               <span class="company">Galaxy Digital Services</span>
               <p class="experience-date">Oct 2024 – Present</p>
@@ -54,17 +80,26 @@
             </article>
             <article class="experience-item">
               <h3 class="role">Security Engineer</h3>
-              <span class="company">Software Engineering Institute</span>
+              <span class="company"
+                >Software Engineering Institute
+                <span class="tag">Internship</span></span
+              >
               <p class="experience-date">Jan 2024 – May 2024</p>
             </article>
             <article class="experience-item">
               <h3 class="role">Security Engineer</h3>
-              <span class="company">Network Contagion Research Institute</span>
+              <span class="company"
+                >Network Contagion Research Institute
+                <span class="tag">Internship</span></span
+              >
               <p class="experience-date">Jun 2023 – Aug 2023</p>
             </article>
             <article class="experience-item">
               <h3 class="role">Security Engineer</h3>
-              <span class="company">DVIs Software Services Inc.</span>
+              <span class="company"
+                >DVIs Software Services Inc.
+                <span class="tag">Internship</span></span
+              >
               <p class="experience-date">Jun 2023 – Aug 2023</p>
             </article>
             <article class="experience-item">
@@ -81,34 +116,21 @@
           </div>
           <div class="skills-grid">
             <div>
-              <h3>Programming</h3>
+              <h3>AI &amp; LLM Security</h3>
               <div class="chips">
-                <span class="chip">Python</span>
-                <span class="chip">Java</span>
-                <span class="chip">C</span>
-                <span class="chip">PHP</span>
-                <span class="chip">JavaScript</span>
-                <span class="chip">TypeScript</span>
-                <span class="chip">Node.js</span>
-                <span class="chip">Assembly (x86)</span>
+                <span class="chip">Prompt Injection</span>
+                <span class="chip">Jailbreak Testing</span>
+                <span class="chip">RAG Poisoning</span>
+                <span class="chip">Agentic Exploitation</span>
+                <span class="chip">MCP Security</span>
               </div>
             </div>
             <div>
-              <h3>Security Tools</h3>
+              <h3>Reverse Engineering</h3>
               <div class="chips">
-                <span class="chip">Wireshark</span>
-                <span class="chip">Burp Suite</span>
-                <span class="chip">Metasploit</span>
                 <span class="chip">Ghidra</span>
-              </div>
-            </div>
-            <div>
-              <h3>Databases</h3>
-              <div class="chips">
-                <span class="chip">MySQL</span>
-                <span class="chip">PostgreSQL</span>
-                <span class="chip">MongoDB</span>
-                <span class="chip">Redis</span>
+                <span class="chip">Assembly (x86)</span>
+                <span class="chip">C</span>
               </div>
             </div>
           </div>
@@ -122,10 +144,8 @@
             <header>
               <h3>Carnegie Mellon University</h3>
             </header>
-            <p class="muted">
-              Master of Science in Information Security, GPA 3.8 / 4.0
-            </p>
-            <p class="education-date">Aug 2022 – May 2024</p>
+            <p class="muted">Master of Science in Information Security</p>
+            <p class="education-date">Achieved 2024</p>
           </article>
           <article class="education-item">
             <header>
@@ -138,7 +158,6 @@
                 >
               </h3>
             </header>
-            <p class="muted">Issued by Offensive Security.</p>
             <p class="education-date">Achieved 2024</p>
           </article>
           <article class="education-item">
@@ -152,7 +171,6 @@
                 >
               </h3>
             </header>
-            <p class="muted">Issued by Offensive Security.</p>
             <p class="education-date">Achieved 2025</p>
           </article>
         </section>
@@ -168,7 +186,9 @@
             placeholder="Search articles..."
             aria-label="Search articles"
           />
-          <p id="no-results" class="no-results">No articles found</p>
+          <p id="no-results" class="no-results" role="status" aria-live="polite">
+            No articles found
+          </p>
           <div class="post-list">
             <article class="post" id="router-nginx">
               <h3>
@@ -180,11 +200,7 @@
                   the Systems Engineering Party</a
                 >
               </h3>
-              <p>
-                A deep dive into systems engineering chaos when a router meets
-                Nginx and MoE architecture walks into the party.
-              </p>
-              <small class="muted">Published February 2026 · 5 min read</small>
+              <small class="muted">February 2026 · 5 min read</small>
             </article>
             <article class="post" id="sql-injection-primer">
               <h3>
@@ -196,10 +212,7 @@
                   Primer</a
                 >
               </h3>
-              <p>
-                SQL injection, the ancient trick still crashing modern apps; learn how attackers turn your inputs into open doors and the boring fixes that actually stop them.
-              </p>
-              <small class="muted">Published September 2025 · 4 min read</small>
+              <small class="muted">September 2025 · 4 min read</small>
             </article>
             <article class="post" id="prototype-conundrum">
               <h3>
@@ -210,11 +223,7 @@
                   >JavaScript Prototype Conundrum</a
                 >
               </h3>
-              <p>
-                A playful walkthrough of prototype pollution in JavaScript and
-                how defenders can spot it.
-              </p>
-              <small class="muted">Published July 2025 · 6 min read</small>
+              <small class="muted">July 2025 · 6 min read</small>
             </article>
             <article class="post" id="nearest-neighbor">
               <h3>
@@ -226,11 +235,7 @@
                   What We Can Learn</a
                 >
               </h3>
-              <p>
-                Breakdown of how Fancy Bear abused neighboring Wi-Fi networks
-                and what defenders should watch for.
-              </p>
-              <small class="muted">Published December 2024 · 3 min read</small>
+              <small class="muted">December 2024 · 3 min read</small>
             </article>
             <article class="post" id="yubikey-cloning">
               <h3>
@@ -242,11 +247,7 @@
                   Worry?</a
                 >
               </h3>
-              <p>
-                Evaluates reported YubiKey cloning research and frames realistic
-                risk for hardware-based MFA.
-              </p>
-              <small class="muted">Published September 2024 · 4 min read</small>
+              <small class="muted">September 2024 · 4 min read</small>
             </article>
           </div>
         </section>
@@ -261,28 +262,41 @@
 
     <script>
       (function() {
+        // Full-time security roles only — internships are deliberately excluded.
+        // Open-ended range (null) counts through today, so this never goes stale.
+        var yearsEl = document.getElementById('years-exp');
+        if (yearsEl) {
+          var roles = [
+            ['2020-08', '2022-08'], // Willis Towers Watson
+            ['2024-07', '2024-10'], // DVIs Software Services
+            ['2024-10', null] // Galaxy Digital
+          ];
+          var now = new Date();
+          var months = roles.reduce(function(total, role) {
+            var from = role[0].split('-');
+            var to = role[1] ? role[1].split('-') : null;
+            var toYear = to ? Number(to[0]) : now.getFullYear();
+            var toMonth = to ? Number(to[1]) : now.getMonth() + 1;
+            return total + (toYear - Number(from[0])) * 12 +
+              (toMonth - Number(from[1]));
+          }, 0);
+          yearsEl.textContent = Math.floor(months / 12) + '+';
+        }
+
         var searchInput = document.getElementById('search-posts');
         var noResults = document.getElementById('no-results');
         var posts = document.querySelectorAll('.post');
-
-        function escapeHtml(str) {
-          var div = document.createElement('div');
-          div.textContent = str;
-          return div.innerHTML;
-        }
 
         function normalizeText(str) {
           return str.toLowerCase().replace(/[^\w\s]/g, '');
         }
 
         searchInput.addEventListener('input', function(e) {
-          var query = normalizeText(escapeHtml(e.target.value));
+          var query = normalizeText(e.target.value);
           var visibleCount = 0;
 
           posts.forEach(function(post) {
-            var title = post.querySelector('h3').textContent;
-            var desc = post.querySelector('p').textContent;
-            var combined = normalizeText(title + ' ' + desc);
+            var combined = normalizeText(post.textContent);
 
             if (combined.indexOf(query) !== -1 || query === '') {
               post.style.display = '';
