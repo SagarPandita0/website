@@ -24,25 +24,32 @@
   var noResults = document.getElementById('no-results');
   var posts = document.querySelectorAll('.post');
 
+  // Titles wrap across lines in the source, so textContent carries newlines and
+  // indentation. Collapsing runs of whitespace is what lets a query spanning a
+  // line break ("an sql injection primer") still match.
   function normalizeText(str) {
-    return str.toLowerCase().replace(/[^\w\s]/g, '');
+    return str.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  searchInput.addEventListener('input', function(e) {
-    var query = normalizeText(e.target.value);
-    var visibleCount = 0;
-
-    posts.forEach(function(post) {
-      var combined = normalizeText(post.textContent);
-
-      if (combined.indexOf(query) !== -1 || query === '') {
-        post.style.display = '';
-        visibleCount++;
-      } else {
-        post.style.display = 'none';
-      }
+  if (searchInput && noResults && posts.length) {
+    var index = Array.prototype.map.call(posts, function(post) {
+      return { el: post, text: normalizeText(post.textContent) };
     });
 
-    noResults.style.display = visibleCount === 0 ? 'block' : 'none';
-  });
+    searchInput.addEventListener('input', function(e) {
+      var query = normalizeText(e.target.value);
+      var visibleCount = 0;
+
+      index.forEach(function(entry) {
+        if (query === '' || entry.text.indexOf(query) !== -1) {
+          entry.el.style.display = '';
+          visibleCount++;
+        } else {
+          entry.el.style.display = 'none';
+        }
+      });
+
+      noResults.style.display = visibleCount === 0 ? 'block' : 'none';
+    });
+  }
 })();
