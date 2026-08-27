@@ -352,6 +352,51 @@ h1 {
   font-size: 0.78rem;
 }
 
+/* --- Experimental --------------------------------------------------------- */
+
+.exp-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.exp-item {
+  padding: 0.85rem 0 0.85rem 0.9rem;
+  border-bottom: 1px solid var(--rule);
+  border-left: 2px solid transparent;
+  transition: border-left-color 0.15s ease;
+}
+
+.exp-item:last-child {
+  border-bottom: 0;
+}
+
+.exp-item:hover {
+  border-left-color: var(--accent);
+}
+
+.exp-item h3 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.exp-item a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.exp-item a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.exp-item small {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
 /* --- Education ------------------------------------------------------------ */
 
 .education-item {
