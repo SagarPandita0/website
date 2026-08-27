@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Qwen3.8 on DGX Spark · Sagar Pandita</title>
+    <meta
+      name="description"
+      content="Benchmarking Qwen3.8-27B-FP8 across context windows from 512 to 262,144 tokens on an NVIDIA DGX Spark, with live thermal and clock telemetry."
+    />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://sagarpandita.com/experimental/qwen38-dgx-spark.html" />
+    <meta property="og:title" content="Qwen3.8 on DGX Spark: a 256K context sweep" />
+    <meta
+      property="og:description"
+      content="Single-request vLLM benchmark of Qwen3.8-27B-FP8 from 512 to 262,144 tokens of context, instrumented with 5-second thermal and clock telemetry."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230b0d10'/%3E%3Cpath%20d='M9%2011l5%205-5%205'%20fill='none'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M17%2021h6'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      /* Chart tokens — series colors validated for CVD safety on both grounds. */
+      :root {
+        --gpu: #2a78d6;
+        --cpu: #eb6834;
+        --nvme: #1baf7a;
+        --warn-bg: rgba(237, 161, 0, 0.14);
+        --warn-ink: #8a5f00;
+        --band: rgba(20, 23, 28, 0.045);
+        --grid: #eceef2;
+        --crosshair: rgba(20, 23, 28, 0.35);
+        --tip-bg: #14171c;
+        --tip-ink: #f2f4f7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --gpu: #3987e5;
+          --cpu: #d95926;
+          --nvme: #199e70;
+          --warn-bg: rgba(201, 133, 0, 0.18);
+          --warn-ink: #e0a63d;
+          --band: rgba(228, 232, 240, 0.05);
+          --grid: #1a2029;
+          --crosshair: rgba(228, 232, 240, 0.4);
+          --tip-bg: #05070a;
+          --tip-ink: #e4e8f0;
+        }
+      }
+
+      .back-link {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        text-decoration: none;
+      }
+      .back-link:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .lab-hero h1 {
+        margin: 0.2rem 0 0.9rem;
+        font-size: clamp(1.7rem, 4.5vw, 2.3rem);
+      }
+      .lede {
+        color: var(--muted);
+        max-width: 62ch;
+        margin: 0;
+      }
+      .lede + .lede {
+        margin-top: 0.8rem;
+      }
+      .lede code,
+      .section code {
+        font-family: var(--font-mono);
+        font-size: 0.85em;
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.6rem;
+        margin: 1.6rem 0 0;
+      }
+      .fact {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 0.65rem 0.85rem;
+      }
+      .fact .k {
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        color: var(--muted);
+        margin-bottom: 0.3rem;
+      }
+      .fact .k::before {
+        content: '> ';
+        color: var(--prompt);
+      }
+      .fact .v {
+        font-family: var(--font-mono);
+        font-size: 1.15rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.25;
+      }
+      .fact .u {
+        font-size: 0.75rem;
+        font-weight: 400;
+        color: var(--muted);
+      }
+
+      .chart-panel {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 0.9rem 0.9rem 0.4rem;
+        margin-bottom: 0.8rem;
+        overflow-x: auto;
+      }
+      .chart-panel h3 {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: lowercase;
+        color: var(--muted);
+        margin: 0 0 0.3rem;
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+      }
+      .leg {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        text-transform: none;
+        letter-spacing: 0;
+        font-family: var(--font-sans);
+        font-size: 0.78rem;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .leg .sw {
+        width: 14px;
+        height: 3px;
+        border-radius: 2px;
+        display: inline-block;
+      }
+      .leg .swb {
+        width: 12px;
+        height: 9px;
+        border-radius: 2px;
+        opacity: 0.55;
+      }
+      .chart-panel svg {
+        display: block;
+      }
+      .chart-panel svg text {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        fill: var(--muted);
+      }
+      .chart-panel svg .phlbl {
+        font-size: 10px;
+      }
+      .duo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.8rem;
+      }
+      @media (max-width: 34rem) {
+        .duo {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .tip {
+        position: fixed;
+        pointer-events: none;
+        z-index: 10;
+        display: none;
+        background: var(--tip-bg);
+        color: var(--tip-ink);
+        border-radius: 6px;
+        padding: 0.5rem 0.7rem;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        line-height: 1.55;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+      }
+      .tip b {
+        font-weight: 600;
+      }
+
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+        font-size: 0.82rem;
+      }
+      .data-table th {
+        text-align: right;
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        color: var(--muted);
+        padding: 0.45rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+      }
+      .data-table th:first-child,
+      .data-table td:first-child {
+        text-align: left;
+      }
+      .data-table td {
+        text-align: right;
+        padding: 0.4rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+      }
+      .data-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .warnchip {
+        display: inline-block;
+        background: var(--warn-bg);
+        color: var(--warn-ink);
+        border-radius: 4px;
+        padding: 0.05rem 0.4rem;
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+
+      .findings {
+        margin: 0.5rem 0 0;
+        padding: 0 0 0 1.2em;
+        max-width: 70ch;
+      }
+      .findings li {
+        margin-bottom: 0.55rem;
+        color: var(--muted);
+      }
+      .findings b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .note {
+        color: var(--muted);
+        max-width: 70ch;
+        margin: 0 0 1rem;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <main id="content">
+      <div class="page-shell">
+        <header class="hero lab-hero">
+          <p class="eyebrow">
+            <a class="back-link" href="../"><span class="prompt" aria-hidden="true">$</span>cd ~/sagarpandita.com</a>
+          </p>
+          <p class="eyebrow"><span class="prompt" aria-hidden="true">$</span>experimental / august 2026</p>
+          <h1>Qwen3.8 on DGX Spark: a 256K context sweep</h1>
+          <p class="lede">
+            My homelab includes an NVIDIA DGX Spark — a GB10 desktop box with 119&nbsp;GB of
+            unified memory shared between the Grace CPU and Blackwell GPU. When Qwen shipped
+            Qwen3.8-27B-FP8 in August 2026, I benchmarked it under vLLM at every context size
+            from 512 to its full 262,144-token window: one request per size, 256 new tokens,
+            greedy decoding.
+          </p>
+          <p class="lede">
+            The run was instrumented end to end — GPU and CPU-zone temperatures, per-core clocks,
+            and board power sampled every 5 seconds by a headless logger built on my
+            <code>dgxmon</code> monitor's collectors. Every chart below is interactive; hover for
+            exact readings.
+          </p>
+          <div class="facts">
+            <div class="fact"><div class="k">peak gpu temp</div><div class="v">85 <span class="u">°C</span></div></div>
+            <div class="fact"><div class="k">peak cpu zone</div><div class="v">90.7 <span class="u">°C</span></div></div>
+            <div class="fact"><div class="k">peak gpu power</div><div class="v">93.2 <span class="u">W</span></div></div>
+            <div class="fact"><div class="k">cpu throttling</div><div class="v">none</div></div>
+            <div class="fact"><div class="k">max context ok</div><div class="v">256K <span class="u">tokens</span></div></div>
+          </div>
+        </header>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the punchline</p></div>
+          <p class="note">
+            Single-request decode on this box is a memory-bandwidth problem. The GB10's unified
+            LPDDR5x moves ~273&nbsp;GB/s, and decoding streams every active weight byte once per
+            token — so the ceiling is simply bandwidth ÷ bytes-per-token. Measured decode rates
+            from this sweep and my earlier Qwen3.6 runs on the same box land right on that
+            roofline, which is exactly why the local-inference meta has converged on MoE:
+          </p>
+          <div class="chart-panel" style="padding-bottom: 0.9rem">
+            <table class="data-table">
+              <thead>
+                <tr><th>model</th><th>bytes read / token</th><th>roofline</th><th>measured @ 1K ctx</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Qwen3.6-27B dense · bf16</td><td>~54 GB</td><td>~5 tok/s</td><td>4.3 tok/s</td></tr>
+                <tr><td>Qwen3.8-27B dense · FP8</td><td>~28 GB</td><td>~9.8 tok/s</td><td>8.4 tok/s</td></tr>
+                <tr><td>Qwen3.6-27B dense · 5.5-bit</td><td>~19 GB</td><td>~14 tok/s</td><td>10.3 tok/s</td></tr>
+                <tr><td>Qwen3.6-35B-A3B MoE · bf16</td><td>~7 GB active</td><td>~35–40 tok/s</td><td>29.2 tok/s</td></tr>
+                <tr><td>Qwen3.6-35B-A3B MoE · int8</td><td>~3.5 GB active</td><td>~70 tok/s</td><td>36.9 tok/s</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note" style="margin-top: 1rem">
+            Dense throughput scales almost linearly with 1/bytes; a bigger MoE outruns a smaller
+            dense model 5–7× because it only touches ~3B active parameters per token. Prefill is
+            the counterpoint — it's compute-bound, and the dense 27B still ingests 400–540 tok/s
+            at long context.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">thermals &amp; clocks</p></div>
+          <p class="note">
+            44 minutes on a shared timeline. Shaded columns mark benchmark phases; each begins
+            with an engine boot (model load + CUDA graph capture) before its prompts run. Amber
+            strips on the clock panel mark samples where the GPU reported a
+            <span class="warnchip">⚠ sw power cap</span> throttle reason.
+          </p>
+
+          <div class="chart-panel">
+            <h3>temperature · °c
+              <span class="leg"><span class="sw" style="background: var(--gpu)"></span>GPU</span>
+              <span class="leg"><span class="sw" style="background: var(--cpu)"></span>CPU zone (max)</span>
+              <span class="leg"><span class="sw" style="background: var(--nvme)"></span>NVMe</span>
+            </h3>
+            <div id="ch-temp"></div>
+          </div>
+
+          <div class="chart-panel">
+            <h3>clock frequency · mhz
+              <span class="leg"><span class="sw" style="background: var(--cpu)"></span>CPU mean</span>
+              <span class="leg"><span class="swb" style="background: var(--cpu)"></span>per-core range</span>
+              <span class="leg"><span class="sw" style="background: var(--gpu)"></span>GPU SM</span>
+            </h3>
+            <div id="ch-clk"></div>
+          </div>
+
+          <div class="chart-panel">
+            <h3>gpu power · w
+              <span class="leg"><span class="sw" style="background: var(--gpu)"></span>board draw</span>
+            </h3>
+            <div id="ch-pw"></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">throughput vs context</p></div>
+          <p class="note">
+            Prefill rate climbs with prompt length and holds roughly flat past 64K. The
+            end-to-end generation rate (256 tokens ÷ total wall time, prefill included) falls as
+            prefill dominates.
+          </p>
+          <div class="duo">
+            <div class="chart-panel"><h3>prefill · tok/s</h3><div id="ch-pf"></div></div>
+            <div class="chart-panel"><h3>end-to-end generation · tok/s</h3><div id="ch-gen"></div></div>
+          </div>
+          <div class="chart-panel" style="margin-top: 0.8rem; padding-bottom: 0.9rem">
+            <h3>results</h3>
+            <table class="data-table">
+              <thead>
+                <tr><th>context target</th><th>prompt tokens</th><th>wall time</th><th>prefill tok/s</th><th>gen tok/s (e2e)</th></tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">findings</p></div>
+          <ul class="findings">
+            <li>
+              <b>The full 262,144-token window fits and completes</b> in 119 GB of unified memory
+              at gpu-memory-utilization 0.90 — Qwen3.8's hybrid linear-attention design (3 of
+              every 4 layers linear) keeps KV-cache growth modest.
+            </li>
+            <li>
+              <b>The GB10 is power-limited, not thermally limited.</b> GPU temperature plateaus
+              at 84–85 °C during sustained prefill with the board holding ~90 W and intermittent
+              <span class="warnchip">⚠ sw power cap</span> events.
+            </li>
+            <li>
+              <b>CPU cores never throttled.</b> The hottest ACPI CPU zone touched 90.7 °C during
+              the 256K prefill, but no core raised <code>perf_limited</code> and per-core
+              frequencies held their normal 2.8–4.0 GHz envelope throughout.
+            </li>
+            <li>
+              <b>Prefill peaks near 540 tok/s at 128K</b> and eases to ~460 tok/s at 256K;
+              end-to-end generation falls from ~8 tok/s at 1K context to 0.45 tok/s at 256K as
+              prefill dominates the 9.5-minute wall time.
+            </li>
+          </ul>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer__inner">
+        <span>© 2026 Sagar Pandita</span>
+      </div>
+    </footer>
+
+    <div class="tip" id="tip"></div>
+
+    <script>
+      const DATA = {"mon":[{"t":0,"gt":41.0,"ct":45.1,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.47,"ug":0.0,"cap":0},{"t":5,"gt":42.0,"ct":44.3,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.44,"ug":0.0,"cap":0},{"t":10,"gt":42.0,"ct":44.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":201.0,"pw":4.44,"ug":0.0,"cap":0},{"t":15,"gt":42.0,"ct":44.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":227.0,"pw":4.42,"ug":0.0,"cap":0},{"t":20,"gt":42.0,"ct":44.9,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.36,"ug":0.0,"cap":1},{"t":25,"gt":42.0,"ct":44.2,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.41,"ug":0.0,"cap":1},{"t":30,"gt":42.0,"ct":44.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.56,"ug":0.0,"cap":0},{"t":35,"gt":42.0,"ct":45.0,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.43,"ug":0.0,"cap":1},{"t":40,"gt":42.0,"ct":45.2,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.43,"ug":0.0,"cap":1},{"t":45,"gt":42.0,"ct":43.8,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.39,"ug":0.0,"cap":0},{"t":50,"gt":41.0,"ct":43.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.33,"ug":0.0,"cap":0},{"t":56,"gt":41.0,"ct":47.8,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.42,"ug":0.0,"cap":0},{"t":61,"gt":41.0,"ct":49.0,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.37,"ug":0.0,"cap":0},{"t":66,"gt":42.0,"ct":46.6,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.49,"ug":0.0,"cap":0},{"t":71,"gt":42.0,"ct":52.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.5,"ug":0.0,"cap":1},{"t":76,"gt":42.0,"ct":52.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":4.48,"ug":0.0,"cap":0},{"t":81,"gt":43.0,"ct":53.3,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":10.94,"ug":0.0,"cap":0},{"t":86,"gt":43.0,"ct":52.3,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.41,"ug":1.0,"cap":0},{"t":91,"gt":43.0,"ct":52.9,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.48,"ug":1.0,"cap":0},{"t":96,"gt":44.0,"ct":53.6,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.49,"ug":1.0,"cap":0},{"t":101,"gt":44.0,"ct":53.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.51,"ug":1.0,"cap":0},{"t":106,"gt":44.0,"ct":53.8,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.54,"ug":1.0,"cap":0},{"t":111,"gt":44.0,"ct":53.7,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.64,"ug":2.0,"cap":0},{"t":116,"gt":44.0,"ct":53.8,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.6,"ug":1.0,"cap":0},{"t":121,"gt":44.0,"ct":53.9,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.53,"ug":2.0,"cap":0},{"t":126,"gt":44.0,"ct":54.5,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.56,"ug":2.0,"cap":0},{"t":131,"gt":45.0,"ct":54.5,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":11.64,"ug":1.0,"cap":0},{"t":136,"gt":45.0,"ct":54.6,"nv":42.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.63,"ug":2.0,"cap":0},{"t":141,"gt":45.0,"ct":54.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.67,"ug":2.0,"cap":0},{"t":146,"gt":45.0,"ct":54.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.74,"ug":2.0,"cap":0},{"t":151,"gt":45.0,"ct":54.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.74,"ug":2.0,"cap":0},{"t":157,"gt":45.0,"ct":54.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.76,"ug":1.0,"cap":0},{"t":162,"gt":45.0,"ct":54.8,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.75,"ug":2.0,"cap":0},{"t":167,"gt":45.0,"ct":54.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.67,"ug":1.0,"cap":0},{"t":172,"gt":45.0,"ct":54.8,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.74,"ug":1.0,"cap":0},{"t":177,"gt":45.0,"ct":55.0,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.78,"ug":2.0,"cap":0},{"t":182,"gt":45.0,"ct":55.5,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.82,"ug":2.0,"cap":0},{"t":187,"gt":45.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.77,"ug":1.0,"cap":0},{"t":192,"gt":45.0,"ct":55.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.82,"ug":2.0,"cap":0},{"t":197,"gt":46.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.82,"ug":1.0,"cap":0},{"t":202,"gt":46.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.89,"ug":2.0,"cap":0},{"t":207,"gt":46.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.83,"ug":2.0,"cap":0},{"t":212,"gt":46.0,"ct":55.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.83,"ug":2.0,"cap":0},{"t":217,"gt":46.0,"ct":55.7,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.83,"ug":2.0,"cap":0},{"t":222,"gt":46.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.81,"ug":1.0,"cap":0},{"t":227,"gt":46.0,"ct":55.6,"nv":43.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.79,"ug":1.0,"cap":0},{"t":232,"gt":46.0,"ct":55.7,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.76,"ug":2.0,"cap":0},{"t":237,"gt":46.0,"ct":55.8,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.84,"ug":1.0,"cap":0},{"t":242,"gt":46.0,"ct":55.7,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.75,"ug":1.0,"cap":0},{"t":247,"gt":46.0,"ct":55.6,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.81,"ug":2.0,"cap":0},{"t":252,"gt":46.0,"ct":55.8,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.82,"ug":2.0,"cap":0},{"t":258,"gt":46.0,"ct":55.7,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.83,"ug":1.0,"cap":0},{"t":263,"gt":46.0,"ct":55.7,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.78,"ug":2.0,"cap":0},{"t":268,"gt":46.0,"ct":55.7,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.82,"ug":2.0,"cap":0},{"t":273,"gt":46.0,"ct":58.1,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.45,"ug":0.0,"cap":0},{"t":278,"gt":60.0,"ct":63.9,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":70.17,"ug":96.0,"cap":0},{"t":283,"gt":61.0,"ct":69.9,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":78.36,"ug":96.0,"cap":0},{"t":288,"gt":64.0,"ct":72.0,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":80.69,"ug":96.0,"cap":0},{"t":293,"gt":52.0,"ct":61.4,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.28,"ug":0.0,"cap":0},{"t":298,"gt":53.0,"ct":63.0,"nv":44.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":26.75,"ug":95.0,"cap":0},{"t":303,"gt":52.0,"ct":61.3,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":22.79,"ug":95.0,"cap":0},{"t":308,"gt":51.0,"ct":61.5,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.24,"ug":0.0,"cap":0},{"t":313,"gt":50.0,"ct":61.1,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.19,"ug":0.0,"cap":0},{"t":318,"gt":50.0,"ct":60.2,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.12,"ug":0.0,"cap":0},{"t":323,"gt":50.0,"ct":60.9,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":16.9,"ug":95.0,"cap":0},{"t":328,"gt":50.0,"ct":59.6,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2541.0,"pw":19.63,"ug":0.0,"cap":0},{"t":333,"gt":51.0,"ct":59.0,"nv":45.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":19.28,"ug":96.0,"cap":0},{"t":338,"gt":50.0,"ct":62.2,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2418.0,"pw":15.44,"ug":0.0,"cap":0},{"t":343,"gt":50.0,"ct":57.2,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":16.04,"ug":0.0,"cap":0},{"t":348,"gt":50.0,"ct":56.7,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.72,"ug":0.0,"cap":0},{"t":354,"gt":50.0,"ct":59.2,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":17.08,"ug":11.0,"cap":0},{"t":359,"gt":50.0,"ct":60.5,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":17.13,"ug":0.0,"cap":0},{"t":364,"gt":53.0,"ct":61.8,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2554.0,"pw":31.07,"ug":95.0,"cap":0},{"t":369,"gt":55.0,"ct":62.7,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":34.38,"ug":95.0,"cap":0},{"t":374,"gt":55.0,"ct":63.8,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":34.34,"ug":81.0,"cap":0},{"t":379,"gt":59.0,"ct":64.6,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.62,"ug":91.0,"cap":0},{"t":384,"gt":52.0,"ct":61.1,"nv":46.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.4,"ug":0.0,"cap":0},{"t":389,"gt":52.0,"ct":65.9,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.3,"ug":0.0,"cap":0},{"t":394,"gt":51.0,"ct":65.5,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.18,"ug":0.0,"cap":0},{"t":399,"gt":51.0,"ct":65.5,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.1,"ug":0.0,"cap":0},{"t":404,"gt":51.0,"ct":64.5,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.06,"ug":0.0,"cap":0},{"t":409,"gt":50.0,"ct":64.4,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.0,"ug":0.0,"cap":0},{"t":414,"gt":50.0,"ct":63.9,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.97,"ug":0.0,"cap":0},{"t":420,"gt":50.0,"ct":57.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.73,"ug":1.0,"cap":0},{"t":425,"gt":62.0,"ct":67.6,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":76.27,"ug":74.0,"cap":0},{"t":430,"gt":58.0,"ct":63.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":44.73,"ug":77.0,"cap":0},{"t":435,"gt":60.0,"ct":65.6,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":47.6,"ug":77.0,"cap":0},{"t":440,"gt":54.0,"ct":67.3,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.71,"ug":0.0,"cap":0},{"t":445,"gt":53.0,"ct":67.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.6,"ug":0.0,"cap":0},{"t":450,"gt":53.0,"ct":66.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.56,"ug":0.0,"cap":0},{"t":455,"gt":52.0,"ct":66.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.33,"ug":0.0,"cap":0},{"t":460,"gt":56.0,"ct":64.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":34.35,"ug":96.0,"cap":0},{"t":465,"gt":57.0,"ct":65.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":34.74,"ug":96.0,"cap":0},{"t":470,"gt":58.0,"ct":63.6,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":34.91,"ug":96.0,"cap":0},{"t":475,"gt":59.0,"ct":65.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.05,"ug":96.0,"cap":0},{"t":480,"gt":60.0,"ct":66.5,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.19,"ug":96.0,"cap":0},{"t":486,"gt":60.0,"ct":67.1,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":36.37,"ug":96.0,"cap":0},{"t":491,"gt":61.0,"ct":67.7,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.46,"ug":96.0,"cap":0},{"t":496,"gt":61.0,"ct":68.2,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.54,"ug":96.0,"cap":0},{"t":501,"gt":62.0,"ct":68.7,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.6,"ug":96.0,"cap":0},{"t":506,"gt":62.0,"ct":69.1,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.73,"ug":96.0,"cap":0},{"t":511,"gt":63.0,"ct":69.7,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":35.91,"ug":96.0,"cap":0},{"t":516,"gt":68.0,"ct":70.6,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":61.55,"ug":96.0,"cap":0},{"t":521,"gt":64.0,"ct":70.8,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.26,"ug":96.0,"cap":0},{"t":526,"gt":64.0,"ct":70.9,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.28,"ug":96.0,"cap":0},{"t":532,"gt":64.0,"ct":71.7,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.3,"ug":96.0,"cap":0},{"t":537,"gt":64.0,"ct":71.8,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.47,"ug":96.0,"cap":0},{"t":542,"gt":65.0,"ct":71.8,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.42,"ug":96.0,"cap":0},{"t":547,"gt":65.0,"ct":72.6,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.53,"ug":96.0,"cap":0},{"t":552,"gt":71.0,"ct":74.6,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":58.69,"ug":96.0,"cap":0},{"t":557,"gt":66.0,"ct":74.5,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.91,"ug":96.0,"cap":0},{"t":562,"gt":66.0,"ct":74.6,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":36.96,"ug":96.0,"cap":0},{"t":567,"gt":66.0,"ct":74.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.03,"ug":96.0,"cap":0},{"t":572,"gt":66.0,"ct":74.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.03,"ug":96.0,"cap":0},{"t":578,"gt":67.0,"ct":74.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.01,"ug":96.0,"cap":0},{"t":583,"gt":67.0,"ct":74.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.04,"ug":96.0,"cap":0},{"t":588,"gt":72.0,"ct":75.7,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":48.62,"ug":96.0,"cap":0},{"t":593,"gt":69.0,"ct":76.5,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":49.23,"ug":96.0,"cap":0},{"t":598,"gt":73.0,"ct":76.7,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":48.78,"ug":96.0,"cap":0},{"t":603,"gt":69.0,"ct":77.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.69,"ug":96.0,"cap":0},{"t":608,"gt":69.0,"ct":77.0,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.77,"ug":96.0,"cap":0},{"t":613,"gt":69.0,"ct":77.0,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.78,"ug":96.0,"cap":0},{"t":619,"gt":69.0,"ct":77.1,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.71,"ug":96.0,"cap":0},{"t":624,"gt":69.0,"ct":77.3,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.79,"ug":96.0,"cap":0},{"t":629,"gt":69.0,"ct":77.5,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.72,"ug":96.0,"cap":0},{"t":634,"gt":73.0,"ct":78.3,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":58.67,"ug":96.0,"cap":0},{"t":639,"gt":73.0,"ct":80.1,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":59.22,"ug":96.0,"cap":0},{"t":644,"gt":75.0,"ct":79.7,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":51.34,"ug":96.0,"cap":0},{"t":649,"gt":72.0,"ct":79.1,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":53.77,"ug":96.0,"cap":0},{"t":654,"gt":75.0,"ct":78.9,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":52.54,"ug":96.0,"cap":0},{"t":660,"gt":71.0,"ct":78.7,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":47.08,"ug":96.0,"cap":0},{"t":665,"gt":70.0,"ct":78.0,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.17,"ug":96.0,"cap":0},{"t":670,"gt":69.0,"ct":77.8,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.07,"ug":96.0,"cap":0},{"t":675,"gt":69.0,"ct":77.0,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.92,"ug":96.0,"cap":0},{"t":680,"gt":68.0,"ct":76.8,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.83,"ug":96.0,"cap":0},{"t":685,"gt":68.0,"ct":76.7,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.75,"ug":96.0,"cap":0},{"t":690,"gt":68.0,"ct":75.5,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.15,"ug":96.0,"cap":0},{"t":695,"gt":74.0,"ct":78.6,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":59.23,"ug":96.0,"cap":0},{"t":701,"gt":72.0,"ct":79.0,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":58.68,"ug":96.0,"cap":0},{"t":706,"gt":73.0,"ct":81.2,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":61.24,"ug":96.0,"cap":0},{"t":711,"gt":74.0,"ct":80.2,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":60.67,"ug":96.0,"cap":0},{"t":716,"gt":75.0,"ct":80.7,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":60.58,"ug":96.0,"cap":0},{"t":721,"gt":71.0,"ct":78.9,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":54.47,"ug":96.0,"cap":0},{"t":726,"gt":74.0,"ct":79.8,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":54.73,"ug":96.0,"cap":0},{"t":732,"gt":73.0,"ct":78.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":54.56,"ug":96.0,"cap":0},{"t":737,"gt":72.0,"ct":79.9,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":54.62,"ug":96.0,"cap":0},{"t":742,"gt":70.0,"ct":78.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.53,"ug":96.0,"cap":0},{"t":747,"gt":70.0,"ct":78.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.39,"ug":96.0,"cap":0},{"t":752,"gt":69.0,"ct":77.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.25,"ug":96.0,"cap":0},{"t":757,"gt":69.0,"ct":77.5,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.19,"ug":96.0,"cap":0},{"t":762,"gt":69.0,"ct":76.9,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.12,"ug":96.0,"cap":0},{"t":767,"gt":68.0,"ct":76.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.05,"ug":96.0,"cap":0},{"t":772,"gt":64.0,"ct":72.2,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":15.16,"ug":0.0,"cap":0},{"t":778,"gt":61.0,"ct":64.9,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":6.75,"ug":0.0,"cap":0},{"t":783,"gt":59.0,"ct":62.4,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.67,"ug":0.0,"cap":0},{"t":788,"gt":58.0,"ct":62.0,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.54,"ug":0.0,"cap":0},{"t":793,"gt":56.0,"ct":63.6,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.59,"ug":0.0,"cap":1},{"t":798,"gt":55.0,"ct":64.1,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.54,"ug":0.0,"cap":0},{"t":803,"gt":54.0,"ct":62.5,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.44,"ug":0.0,"cap":1},{"t":808,"gt":54.0,"ct":66.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.37,"ug":0.0,"cap":1},{"t":813,"gt":53.0,"ct":67.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":214.0,"pw":5.3,"ug":0.0,"cap":0},{"t":818,"gt":53.0,"ct":64.2,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.66,"ug":0.0,"cap":0},{"t":823,"gt":53.0,"ct":64.9,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.21,"ug":1.0,"cap":0},{"t":828,"gt":53.0,"ct":65.6,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.07,"ug":1.0,"cap":0},{"t":833,"gt":52.0,"ct":65.4,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.01,"ug":1.0,"cap":0},{"t":838,"gt":52.0,"ct":65.5,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.98,"ug":1.0,"cap":0},{"t":843,"gt":52.0,"ct":64.7,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.9,"ug":1.0,"cap":0},{"t":848,"gt":52.0,"ct":64.4,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.91,"ug":2.0,"cap":0},{"t":853,"gt":51.0,"ct":64.4,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.84,"ug":1.0,"cap":0},{"t":858,"gt":51.0,"ct":63.8,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.79,"ug":1.0,"cap":0},{"t":863,"gt":51.0,"ct":63.8,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.71,"ug":2.0,"cap":0},{"t":869,"gt":51.0,"ct":63.6,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.68,"ug":1.0,"cap":0},{"t":874,"gt":50.0,"ct":63.6,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.67,"ug":1.0,"cap":0},{"t":879,"gt":50.0,"ct":62.9,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.63,"ug":1.0,"cap":0},{"t":884,"gt":50.0,"ct":62.7,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.58,"ug":1.0,"cap":0},{"t":889,"gt":50.0,"ct":62.7,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.63,"ug":1.0,"cap":0},{"t":894,"gt":50.0,"ct":62.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.56,"ug":1.0,"cap":0},{"t":899,"gt":50.0,"ct":62.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.42,"ug":1.0,"cap":0},{"t":904,"gt":49.0,"ct":61.8,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.52,"ug":2.0,"cap":0},{"t":909,"gt":49.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.4,"ug":1.0,"cap":0},{"t":914,"gt":49.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.46,"ug":1.0,"cap":0},{"t":919,"gt":49.0,"ct":61.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.47,"ug":2.0,"cap":0},{"t":924,"gt":49.0,"ct":61.7,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.43,"ug":1.0,"cap":0},{"t":929,"gt":49.0,"ct":61.7,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.44,"ug":1.0,"cap":0},{"t":934,"gt":49.0,"ct":61.5,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.36,"ug":2.0,"cap":0},{"t":939,"gt":49.0,"ct":60.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.33,"ug":1.0,"cap":0},{"t":944,"gt":48.0,"ct":60.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.28,"ug":1.0,"cap":0},{"t":949,"gt":48.0,"ct":60.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.29,"ug":2.0,"cap":0},{"t":954,"gt":48.0,"ct":60.7,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.31,"ug":1.0,"cap":0},{"t":959,"gt":48.0,"ct":60.5,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.31,"ug":1.0,"cap":0},{"t":965,"gt":48.0,"ct":60.5,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.21,"ug":2.0,"cap":0},{"t":970,"gt":48.0,"ct":60.7,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.2,"ug":2.0,"cap":0},{"t":975,"gt":48.0,"ct":60.6,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.27,"ug":1.0,"cap":0},{"t":980,"gt":48.0,"ct":60.2,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.2,"ug":1.0,"cap":0},{"t":985,"gt":48.0,"ct":60.5,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.09,"ug":2.0,"cap":0},{"t":990,"gt":48.0,"ct":60.2,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.22,"ug":1.0,"cap":0},{"t":995,"gt":47.0,"ct":59.8,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.17,"ug":1.0,"cap":0},{"t":1000,"gt":47.0,"ct":59.8,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.2,"ug":2.0,"cap":0},{"t":1005,"gt":47.0,"ct":59.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.19,"ug":1.0,"cap":0},{"t":1010,"gt":47.0,"ct":59.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.15,"ug":1.0,"cap":0},{"t":1015,"gt":47.0,"ct":58.0,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.67,"ug":0.0,"cap":0},{"t":1020,"gt":58.0,"ct":64.5,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":74.55,"ug":96.0,"cap":0},{"t":1025,"gt":62.0,"ct":69.6,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":76.77,"ug":96.0,"cap":0},{"t":1030,"gt":64.0,"ct":72.5,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":79.7,"ug":96.0,"cap":0},{"t":1035,"gt":53.0,"ct":61.3,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":14.22,"ug":51.0,"cap":0},{"t":1040,"gt":57.0,"ct":60.1,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":26.62,"ug":96.0,"cap":0},{"t":1046,"gt":52.0,"ct":61.3,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":19.69,"ug":96.0,"cap":0},{"t":1051,"gt":51.0,"ct":61.9,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.43,"ug":0.0,"cap":0},{"t":1056,"gt":50.0,"ct":60.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.3,"ug":0.0,"cap":0},{"t":1061,"gt":50.0,"ct":59.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.21,"ug":0.0,"cap":0},{"t":1066,"gt":49.0,"ct":60.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.03,"ug":0.0,"cap":0},{"t":1071,"gt":51.0,"ct":54.4,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":18.79,"ug":65.0,"cap":0},{"t":1076,"gt":49.0,"ct":59.0,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":17.59,"ug":0.0,"cap":0},{"t":1081,"gt":49.0,"ct":57.0,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":15.48,"ug":0.0,"cap":0},{"t":1086,"gt":50.0,"ct":60.0,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":17.16,"ug":51.0,"cap":0},{"t":1091,"gt":49.0,"ct":59.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":13.68,"ug":0.0,"cap":0},{"t":1096,"gt":49.0,"ct":58.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":16.75,"ug":16.0,"cap":0},{"t":1101,"gt":50.0,"ct":59.7,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":17.31,"ug":0.0,"cap":0},{"t":1106,"gt":52.0,"ct":60.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2541.0,"pw":31.08,"ug":95.0,"cap":0},{"t":1111,"gt":53.0,"ct":61.7,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":35.17,"ug":96.0,"cap":0},{"t":1116,"gt":54.0,"ct":62.1,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":34.47,"ug":80.0,"cap":0},{"t":1122,"gt":55.0,"ct":60.2,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":35.88,"ug":96.0,"cap":0},{"t":1127,"gt":51.0,"ct":62.3,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.33,"ug":0.0,"cap":0},{"t":1132,"gt":51.0,"ct":64.7,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.18,"ug":0.0,"cap":0},{"t":1137,"gt":50.0,"ct":63.6,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.13,"ug":0.0,"cap":0},{"t":1142,"gt":49.0,"ct":63.5,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.05,"ug":0.0,"cap":0},{"t":1147,"gt":49.0,"ct":62.9,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.93,"ug":0.0,"cap":0},{"t":1152,"gt":49.0,"ct":62.1,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.96,"ug":0.0,"cap":0},{"t":1157,"gt":48.0,"ct":61.9,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.89,"ug":0.0,"cap":0},{"t":1162,"gt":48.0,"ct":55.1,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.92,"ug":0.0,"cap":0},{"t":1169,"gt":48.0,"ct":53.0,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.81,"ug":0.0,"cap":0},{"t":1174,"gt":48.0,"ct":49.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.75,"ug":0.0,"cap":0},{"t":1179,"gt":47.0,"ct":48.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":11.69,"ug":0.0,"cap":0},{"t":1184,"gt":48.0,"ct":51.3,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":27.15,"ug":0.0,"cap":0},{"t":1189,"gt":57.0,"ct":60.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":51.73,"ug":33.0,"cap":0},{"t":1194,"gt":55.0,"ct":59.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":39.2,"ug":54.0,"cap":0},{"t":1199,"gt":58.0,"ct":57.5,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":40.65,"ug":56.0,"cap":0},{"t":1204,"gt":56.0,"ct":60.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":35.57,"ug":95.0,"cap":0},{"t":1209,"gt":51.0,"ct":54.0,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.26,"ug":0.0,"cap":0},{"t":1215,"gt":51.0,"ct":54.8,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":14.69,"ug":0.0,"cap":0},{"t":1220,"gt":50.0,"ct":61.9,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.17,"ug":0.0,"cap":0},{"t":1225,"gt":50.0,"ct":61.5,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.15,"ug":0.0,"cap":0},{"t":1230,"gt":50.0,"ct":61.2,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.15,"ug":0.0,"cap":0},{"t":1235,"gt":57.0,"ct":62.0,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":54.32,"ug":96.0,"cap":0},{"t":1240,"gt":61.0,"ct":65.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":53.66,"ug":96.0,"cap":0},{"t":1245,"gt":63.0,"ct":67.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":58.01,"ug":96.0,"cap":0},{"t":1250,"gt":64.0,"ct":69.2,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":56.12,"ug":96.0,"cap":0},{"t":1255,"gt":64.0,"ct":70.4,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":59.74,"ug":96.0,"cap":0},{"t":1260,"gt":66.0,"ct":71.8,"nv":47.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":59.44,"ug":96.0,"cap":0},{"t":1265,"gt":67.0,"ct":74.6,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":59.39,"ug":96.0,"cap":0},{"t":1271,"gt":69.0,"ct":74.7,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":61.13,"ug":96.0,"cap":0},{"t":1276,"gt":68.0,"ct":77.5,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":67.79,"ug":96.0,"cap":0},{"t":1281,"gt":78.0,"ct":78.2,"nv":48.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":61.82,"ug":96.0,"cap":0},{"t":1286,"gt":78.0,"ct":80.2,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":69.66,"ug":96.0,"cap":0},{"t":1291,"gt":72.0,"ct":80.4,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":62.7,"ug":96.0,"cap":0},{"t":1296,"gt":72.0,"ct":81.3,"nv":49.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":64.38,"ug":96.0,"cap":0},{"t":1301,"gt":74.0,"ct":81.3,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":64.23,"ug":96.0,"cap":0},{"t":1306,"gt":71.0,"ct":80.7,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":52.36,"ug":96.0,"cap":0},{"t":1312,"gt":74.0,"ct":82.6,"nv":50.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2418.0,"pw":67.29,"ug":96.0,"cap":0},{"t":1317,"gt":74.0,"ct":82.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":66.24,"ug":96.0,"cap":0},{"t":1322,"gt":69.0,"ct":76.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.32,"ug":96.0,"cap":0},{"t":1327,"gt":68.0,"ct":75.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.16,"ug":96.0,"cap":0},{"t":1332,"gt":68.0,"ct":74.9,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.01,"ug":96.0,"cap":0},{"t":1337,"gt":67.0,"ct":74.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.89,"ug":96.0,"cap":0},{"t":1342,"gt":67.0,"ct":74.4,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.8,"ug":96.0,"cap":0},{"t":1347,"gt":67.0,"ct":73.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":37.75,"ug":96.0,"cap":0},{"t":1352,"gt":63.0,"ct":69.2,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":22.28,"ug":0.0,"cap":0},{"t":1358,"gt":70.0,"ct":76.2,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":56.37,"ug":96.0,"cap":0},{"t":1363,"gt":69.0,"ct":76.8,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":58.52,"ug":96.0,"cap":0},{"t":1368,"gt":70.0,"ct":77.3,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":58.57,"ug":96.0,"cap":0},{"t":1373,"gt":71.0,"ct":78.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":63.07,"ug":96.0,"cap":0},{"t":1378,"gt":71.0,"ct":80.0,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":63.89,"ug":96.0,"cap":0},{"t":1383,"gt":80.0,"ct":80.8,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":65.26,"ug":96.0,"cap":0},{"t":1388,"gt":72.0,"ct":80.5,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":66.37,"ug":96.0,"cap":0},{"t":1393,"gt":72.0,"ct":81.8,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":62.7,"ug":94.0,"cap":0},{"t":1398,"gt":73.0,"ct":82.1,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":66.78,"ug":96.0,"cap":0},{"t":1404,"gt":75.0,"ct":82.4,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":64.28,"ug":96.0,"cap":0},{"t":1409,"gt":82.0,"ct":83.7,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":70.47,"ug":96.0,"cap":0},{"t":1414,"gt":81.0,"ct":83.4,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":66.06,"ug":96.0,"cap":0},{"t":1419,"gt":81.0,"ct":82.8,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":64.47,"ug":96.0,"cap":0},{"t":1424,"gt":83.0,"ct":83.3,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":64.13,"ug":96.0,"cap":0},{"t":1429,"gt":75.0,"ct":84.0,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":65.86,"ug":96.0,"cap":0},{"t":1434,"gt":77.0,"ct":85.2,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":66.66,"ug":96.0,"cap":0},{"t":1439,"gt":77.0,"ct":86.4,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":70.23,"ug":96.0,"cap":0},{"t":1444,"gt":76.0,"ct":84.2,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2379.0,"pw":68.45,"ug":96.0,"cap":0},{"t":1450,"gt":76.0,"ct":85.6,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":66.72,"ug":96.0,"cap":0},{"t":1455,"gt":77.0,"ct":86.2,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":73.69,"ug":96.0,"cap":0},{"t":1460,"gt":82.0,"ct":87.1,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":67.43,"ug":96.0,"cap":0},{"t":1465,"gt":76.0,"ct":86.5,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2372.0,"pw":69.33,"ug":96.0,"cap":0},{"t":1470,"gt":76.0,"ct":86.7,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":76.51,"ug":96.0,"cap":0},{"t":1475,"gt":77.0,"ct":87.9,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":72.84,"ug":96.0,"cap":0},{"t":1480,"gt":76.0,"ct":87.6,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2333.0,"pw":69.11,"ug":96.0,"cap":0},{"t":1485,"gt":77.0,"ct":87.3,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2359.0,"pw":69.5,"ug":96.0,"cap":0},{"t":1490,"gt":76.0,"ct":87.6,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2385.0,"pw":70.72,"ug":94.0,"cap":0},{"t":1496,"gt":83.0,"ct":87.7,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":69.77,"ug":96.0,"cap":0},{"t":1501,"gt":79.0,"ct":88.6,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2307.0,"pw":70.12,"ug":96.0,"cap":0},{"t":1506,"gt":81.0,"ct":89.4,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":71.84,"ug":96.0,"cap":0},{"t":1511,"gt":79.0,"ct":90.5,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":73.4,"ug":96.0,"cap":0},{"t":1516,"gt":79.0,"ct":89.2,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2294.0,"pw":76.41,"ug":96.0,"cap":0},{"t":1521,"gt":84.0,"ct":88.6,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2346.0,"pw":71.97,"ug":96.0,"cap":0},{"t":1526,"gt":83.0,"ct":89.2,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2314.0,"pw":74.83,"ug":96.0,"cap":0},{"t":1531,"gt":77.0,"ct":88.0,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":72.38,"ug":96.0,"cap":0},{"t":1536,"gt":74.0,"ct":83.0,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":54.45,"ug":96.0,"cap":0},{"t":1542,"gt":82.0,"ct":83.9,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2346.0,"pw":66.92,"ug":96.0,"cap":0},{"t":1547,"gt":74.0,"ct":81.6,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":56.06,"ug":96.0,"cap":0},{"t":1552,"gt":77.0,"ct":82.3,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":67.31,"ug":96.0,"cap":0},{"t":1557,"gt":72.0,"ct":79.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":39.87,"ug":96.0,"cap":0},{"t":1562,"gt":70.0,"ct":78.2,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.53,"ug":96.0,"cap":0},{"t":1567,"gt":70.0,"ct":77.4,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.32,"ug":96.0,"cap":0},{"t":1572,"gt":69.0,"ct":76.7,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.06,"ug":96.0,"cap":0},{"t":1577,"gt":68.0,"ct":75.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.92,"ug":96.0,"cap":0},{"t":1582,"gt":68.0,"ct":75.2,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.72,"ug":96.0,"cap":0},{"t":1588,"gt":67.0,"ct":75.1,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.67,"ug":96.0,"cap":0},{"t":1593,"gt":67.0,"ct":74.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.55,"ug":96.0,"cap":0},{"t":1598,"gt":62.0,"ct":66.4,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":14.58,"ug":0.0,"cap":0},{"t":1603,"gt":59.0,"ct":62.5,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":6.6,"ug":0.0,"cap":0},{"t":1608,"gt":57.0,"ct":60.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":227.0,"pw":5.6,"ug":0.0,"cap":0},{"t":1613,"gt":56.0,"ct":58.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":201.0,"pw":5.32,"ug":0.0,"cap":1},{"t":1618,"gt":54.0,"ct":57.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.43,"ug":0.0,"cap":0},{"t":1623,"gt":54.0,"ct":56.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.35,"ug":0.0,"cap":0},{"t":1628,"gt":53.0,"ct":55.9,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.22,"ug":0.0,"cap":1},{"t":1633,"gt":53.0,"ct":57.5,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.32,"ug":0.0,"cap":1},{"t":1638,"gt":52.0,"ct":57.2,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.41,"ug":0.0,"cap":0},{"t":1643,"gt":52.0,"ct":62.1,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.38,"ug":0.0,"cap":0},{"t":1648,"gt":52.0,"ct":63.2,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.29,"ug":0.0,"cap":0},{"t":1653,"gt":52.0,"ct":57.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.27,"ug":0.0,"cap":1},{"t":1658,"gt":52.0,"ct":58.4,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.65,"ug":1.0,"cap":0},{"t":1663,"gt":53.0,"ct":60.8,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.61,"ug":2.0,"cap":0},{"t":1668,"gt":53.0,"ct":63.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.12,"ug":1.0,"cap":0},{"t":1674,"gt":53.0,"ct":63.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.1,"ug":1.0,"cap":0},{"t":1679,"gt":53.0,"ct":63.4,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.07,"ug":1.0,"cap":0},{"t":1684,"gt":53.0,"ct":63.1,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.1,"ug":1.0,"cap":0},{"t":1689,"gt":53.0,"ct":63.1,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.07,"ug":1.0,"cap":0},{"t":1694,"gt":53.0,"ct":62.9,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.03,"ug":1.0,"cap":0},{"t":1699,"gt":53.0,"ct":62.8,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.06,"ug":1.0,"cap":0},{"t":1704,"gt":53.0,"ct":62.7,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.07,"ug":1.0,"cap":0},{"t":1709,"gt":53.0,"ct":62.5,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.0,"ug":2.0,"cap":0},{"t":1714,"gt":52.0,"ct":62.7,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.01,"ug":1.0,"cap":0},{"t":1719,"gt":52.0,"ct":62.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.09,"ug":1.0,"cap":0},{"t":1724,"gt":52.0,"ct":62.7,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.99,"ug":1.0,"cap":0},{"t":1729,"gt":52.0,"ct":62.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.0,"ug":1.0,"cap":0},{"t":1734,"gt":52.0,"ct":62.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.93,"ug":1.0,"cap":0},{"t":1739,"gt":52.0,"ct":62.4,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.93,"ug":2.0,"cap":0},{"t":1744,"gt":52.0,"ct":62.2,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.9,"ug":1.0,"cap":0},{"t":1749,"gt":52.0,"ct":62.5,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.87,"ug":1.0,"cap":0},{"t":1754,"gt":52.0,"ct":62.5,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.97,"ug":2.0,"cap":0},{"t":1759,"gt":52.0,"ct":62.1,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.89,"ug":1.0,"cap":0},{"t":1764,"gt":52.0,"ct":62.1,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.9,"ug":1.0,"cap":0},{"t":1770,"gt":52.0,"ct":61.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.9,"ug":2.0,"cap":0},{"t":1775,"gt":52.0,"ct":61.8,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.93,"ug":1.0,"cap":0},{"t":1780,"gt":52.0,"ct":61.8,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.8,"ug":1.0,"cap":0},{"t":1785,"gt":52.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.86,"ug":2.0,"cap":0},{"t":1790,"gt":52.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.85,"ug":1.0,"cap":0},{"t":1795,"gt":51.0,"ct":61.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.76,"ug":1.0,"cap":0},{"t":1800,"gt":51.0,"ct":61.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.75,"ug":2.0,"cap":0},{"t":1805,"gt":51.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.76,"ug":1.0,"cap":0},{"t":1810,"gt":51.0,"ct":61.5,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.81,"ug":2.0,"cap":0},{"t":1815,"gt":51.0,"ct":61.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.73,"ug":1.0,"cap":0},{"t":1820,"gt":51.0,"ct":61.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.66,"ug":1.0,"cap":0},{"t":1825,"gt":51.0,"ct":61.6,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.7,"ug":1.0,"cap":0},{"t":1830,"gt":51.0,"ct":61.5,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.69,"ug":1.0,"cap":0},{"t":1835,"gt":51.0,"ct":61.3,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.74,"ug":1.0,"cap":0},{"t":1840,"gt":51.0,"ct":61.1,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.81,"ug":1.0,"cap":0},{"t":1845,"gt":51.0,"ct":60.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.73,"ug":1.0,"cap":0},{"t":1850,"gt":51.0,"ct":60.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.71,"ug":1.0,"cap":0},{"t":1855,"gt":51.0,"ct":56.9,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.52,"ug":0.0,"cap":0},{"t":1860,"gt":51.0,"ct":65.0,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.29,"ug":0.0,"cap":0},{"t":1865,"gt":63.0,"ct":71.0,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":72.99,"ug":96.0,"cap":0},{"t":1871,"gt":65.0,"ct":75.3,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":79.55,"ug":96.0,"cap":0},{"t":1876,"gt":57.0,"ct":63.1,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2411.0,"pw":16.9,"ug":0.0,"cap":0},{"t":1881,"gt":59.0,"ct":69.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":24.51,"ug":95.0,"cap":0},{"t":1886,"gt":56.0,"ct":66.0,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":23.44,"ug":0.0,"cap":0},{"t":1891,"gt":55.0,"ct":67.5,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.43,"ug":0.0,"cap":0},{"t":1896,"gt":55.0,"ct":66.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.36,"ug":0.0,"cap":0},{"t":1901,"gt":54.0,"ct":66.1,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.27,"ug":0.0,"cap":0},{"t":1906,"gt":54.0,"ct":66.2,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":19.4,"ug":96.0,"cap":0},{"t":1911,"gt":55.0,"ct":63.4,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":21.96,"ug":96.0,"cap":0},{"t":1916,"gt":54.0,"ct":63.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":19.27,"ug":52.0,"cap":0},{"t":1921,"gt":55.0,"ct":63.5,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":14.96,"ug":60.0,"cap":0},{"t":1926,"gt":54.0,"ct":64.2,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":17.64,"ug":19.0,"cap":0},{"t":1931,"gt":54.0,"ct":66.3,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":14.6,"ug":0.0,"cap":0},{"t":1936,"gt":54.0,"ct":65.2,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":18.12,"ug":0.0,"cap":0},{"t":1942,"gt":54.0,"ct":64.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2418.0,"pw":18.4,"ug":23.0,"cap":0},{"t":1947,"gt":60.0,"ct":67.3,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2535.0,"pw":32.32,"ug":83.0,"cap":0},{"t":1952,"gt":60.0,"ct":68.2,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":36.67,"ug":83.0,"cap":0},{"t":1957,"gt":60.0,"ct":69.0,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":37.16,"ug":90.0,"cap":0},{"t":1962,"gt":60.0,"ct":69.6,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2522.0,"pw":35.96,"ug":96.0,"cap":0},{"t":1967,"gt":56.0,"ct":63.1,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":14.3,"ug":0.0,"cap":0},{"t":1972,"gt":56.0,"ct":68.4,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.19,"ug":0.0,"cap":0},{"t":1977,"gt":55.0,"ct":68.2,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.07,"ug":0.0,"cap":0},{"t":1982,"gt":55.0,"ct":67.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.99,"ug":0.0,"cap":0},{"t":1987,"gt":54.0,"ct":67.4,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.96,"ug":0.0,"cap":0},{"t":1993,"gt":54.0,"ct":67.3,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.91,"ug":0.0,"cap":0},{"t":1998,"gt":54.0,"ct":66.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.86,"ug":0.0,"cap":0},{"t":2003,"gt":54.0,"ct":57.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.19,"ug":0.0,"cap":0},{"t":2008,"gt":54.0,"ct":58.3,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2418.0,"pw":13.66,"ug":0.0,"cap":0},{"t":2013,"gt":53.0,"ct":54.9,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.66,"ug":0.0,"cap":0},{"t":2018,"gt":52.0,"ct":54.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.46,"ug":0.0,"cap":0},{"t":2024,"gt":52.0,"ct":53.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.42,"ug":0.0,"cap":0},{"t":2029,"gt":64.0,"ct":66.3,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":61.13,"ug":96.0,"cap":0},{"t":2034,"gt":61.0,"ct":66.3,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2528.0,"pw":46.31,"ug":63.0,"cap":0},{"t":2039,"gt":64.0,"ct":68.2,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":55.49,"ug":92.0,"cap":0},{"t":2044,"gt":57.0,"ct":60.3,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.23,"ug":0.0,"cap":0},{"t":2049,"gt":55.0,"ct":57.8,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":13.01,"ug":0.0,"cap":0},{"t":2054,"gt":56.0,"ct":64.3,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":29.74,"ug":0.0,"cap":0},{"t":2059,"gt":54.0,"ct":66.7,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.91,"ug":0.0,"cap":0},{"t":2064,"gt":54.0,"ct":66.5,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.9,"ug":0.0,"cap":0},{"t":2069,"gt":53.0,"ct":65.7,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":12.88,"ug":0.0,"cap":0},{"t":2074,"gt":61.0,"ct":68.0,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":57.23,"ug":96.0,"cap":0},{"t":2079,"gt":64.0,"ct":69.8,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":54.61,"ug":96.0,"cap":0},{"t":2084,"gt":66.0,"ct":72.1,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":59.58,"ug":96.0,"cap":0},{"t":2090,"gt":67.0,"ct":74.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":59.81,"ug":96.0,"cap":0},{"t":2095,"gt":68.0,"ct":75.4,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2509.0,"pw":59.67,"ug":96.0,"cap":0},{"t":2100,"gt":69.0,"ct":75.9,"nv":51.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2502.0,"pw":62.12,"ug":96.0,"cap":0},{"t":2105,"gt":70.0,"ct":77.2,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":61.77,"ug":96.0,"cap":0},{"t":2110,"gt":71.0,"ct":78.5,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":62.16,"ug":96.0,"cap":0},{"t":2115,"gt":73.0,"ct":80.9,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":68.89,"ug":96.0,"cap":0},{"t":2120,"gt":73.0,"ct":80.5,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":62.67,"ug":96.0,"cap":0},{"t":2125,"gt":73.0,"ct":82.9,"nv":52.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":71.19,"ug":96.0,"cap":0},{"t":2130,"gt":81.0,"ct":82.0,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":63.65,"ug":96.0,"cap":0},{"t":2136,"gt":80.0,"ct":82.9,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":65.86,"ug":96.0,"cap":0},{"t":2141,"gt":74.0,"ct":82.9,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":65.31,"ug":96.0,"cap":0},{"t":2146,"gt":73.0,"ct":83.7,"nv":53.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":66.85,"ug":96.0,"cap":0},{"t":2151,"gt":75.0,"ct":83.4,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2398.0,"pw":65.19,"ug":96.0,"cap":0},{"t":2156,"gt":81.0,"ct":85.0,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":67.78,"ug":96.0,"cap":0},{"t":2161,"gt":75.0,"ct":84.6,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2379.0,"pw":67.67,"ug":96.0,"cap":0},{"t":2166,"gt":75.0,"ct":83.9,"nv":54.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":71.05,"ug":96.0,"cap":0},{"t":2171,"gt":76.0,"ct":86.0,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":68.38,"ug":96.0,"cap":0},{"t":2176,"gt":76.0,"ct":86.1,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":75.15,"ug":96.0,"cap":0},{"t":2182,"gt":82.0,"ct":87.6,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":70.07,"ug":96.0,"cap":0},{"t":2187,"gt":77.0,"ct":86.3,"nv":55.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":68.42,"ug":96.0,"cap":0},{"t":2192,"gt":76.0,"ct":84.8,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":74.89,"ug":96.0,"cap":0},{"t":2197,"gt":85.0,"ct":87.7,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2437.0,"pw":76.91,"ug":96.0,"cap":0},{"t":2202,"gt":84.0,"ct":87.1,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":69.35,"ug":96.0,"cap":0},{"t":2207,"gt":80.0,"ct":87.9,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":71.11,"ug":96.0,"cap":0},{"t":2212,"gt":78.0,"ct":88.6,"nv":56.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":71.97,"ug":96.0,"cap":0},{"t":2217,"gt":80.0,"ct":88.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2340.0,"pw":70.85,"ug":96.0,"cap":0},{"t":2223,"gt":84.0,"ct":89.2,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":72.19,"ug":96.0,"cap":0},{"t":2228,"gt":77.0,"ct":90.2,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":71.4,"ug":96.0,"cap":0},{"t":2233,"gt":78.0,"ct":88.1,"nv":57.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":77.04,"ug":96.0,"cap":0},{"t":2238,"gt":78.0,"ct":89.5,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":73.23,"ug":96.0,"cap":0},{"t":2243,"gt":84.0,"ct":90.1,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2314.0,"pw":72.79,"ug":96.0,"cap":0},{"t":2248,"gt":77.0,"ct":88.4,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":74.54,"ug":96.0,"cap":0},{"t":2253,"gt":84.0,"ct":89.3,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":73.81,"ug":96.0,"cap":0},{"t":2258,"gt":78.0,"ct":88.2,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":75.16,"ug":96.0,"cap":0},{"t":2263,"gt":77.0,"ct":89.0,"nv":58.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":75.97,"ug":96.0,"cap":0},{"t":2268,"gt":77.0,"ct":87.3,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":74.25,"ug":96.0,"cap":0},{"t":2274,"gt":78.0,"ct":88.0,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":74.48,"ug":96.0,"cap":0},{"t":2279,"gt":77.0,"ct":88.5,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.22,"ug":96.0,"cap":0},{"t":2284,"gt":83.0,"ct":90.0,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":74.65,"ug":96.0,"cap":0},{"t":2289,"gt":76.0,"ct":87.4,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":74.41,"ug":96.0,"cap":0},{"t":2294,"gt":78.0,"ct":88.2,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":78.39,"ug":96.0,"cap":0},{"t":2299,"gt":78.0,"ct":86.9,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2359.0,"pw":76.03,"ug":96.0,"cap":0},{"t":2304,"gt":76.0,"ct":87.7,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2437.0,"pw":76.23,"ug":96.0,"cap":0},{"t":2309,"gt":82.0,"ct":86.5,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2320.0,"pw":75.55,"ug":96.0,"cap":0},{"t":2314,"gt":76.0,"ct":87.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2398.0,"pw":77.25,"ug":96.0,"cap":0},{"t":2320,"gt":76.0,"ct":86.7,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":75.78,"ug":96.0,"cap":0},{"t":2325,"gt":82.0,"ct":88.4,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":80.95,"ug":96.0,"cap":0},{"t":2330,"gt":76.0,"ct":88.3,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":77.45,"ug":96.0,"cap":0},{"t":2335,"gt":75.0,"ct":89.1,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":77.94,"ug":96.0,"cap":0},{"t":2340,"gt":81.0,"ct":86.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":74.53,"ug":96.0,"cap":0},{"t":2345,"gt":82.0,"ct":88.6,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2353.0,"pw":78.79,"ug":96.0,"cap":0},{"t":2350,"gt":82.0,"ct":89.5,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":78.02,"ug":96.0,"cap":0},{"t":2355,"gt":76.0,"ct":87.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.33,"ug":96.0,"cap":0},{"t":2360,"gt":82.0,"ct":87.6,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":77.64,"ug":96.0,"cap":0},{"t":2365,"gt":77.0,"ct":88.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2372.0,"pw":77.63,"ug":96.0,"cap":0},{"t":2370,"gt":76.0,"ct":87.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":75.99,"ug":96.0,"cap":0},{"t":2376,"gt":81.0,"ct":89.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":83.28,"ug":96.0,"cap":0},{"t":2381,"gt":82.0,"ct":88.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2301.0,"pw":80.33,"ug":96.0,"cap":0},{"t":2386,"gt":82.0,"ct":88.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2418.0,"pw":78.08,"ug":96.0,"cap":0},{"t":2391,"gt":76.0,"ct":87.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2483.0,"pw":75.2,"ug":96.0,"cap":0},{"t":2396,"gt":76.0,"ct":87.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.28,"ug":96.0,"cap":0},{"t":2401,"gt":82.0,"ct":89.5,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":80.9,"ug":96.0,"cap":0},{"t":2406,"gt":84.0,"ct":87.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":77.91,"ug":96.0,"cap":0},{"t":2411,"gt":82.0,"ct":88.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2288.0,"pw":80.51,"ug":96.0,"cap":0},{"t":2416,"gt":82.0,"ct":89.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":86.87,"ug":96.0,"cap":0},{"t":2421,"gt":77.0,"ct":87.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":77.05,"ug":96.0,"cap":0},{"t":2427,"gt":82.0,"ct":90.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":82.04,"ug":96.0,"cap":0},{"t":2432,"gt":76.0,"ct":88.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":81.51,"ug":96.0,"cap":0},{"t":2437,"gt":77.0,"ct":88.0,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2320.0,"pw":82.64,"ug":96.0,"cap":0},{"t":2442,"gt":77.0,"ct":88.6,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.83,"ug":96.0,"cap":0},{"t":2447,"gt":82.0,"ct":89.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2366.0,"pw":81.85,"ug":96.0,"cap":0},{"t":2452,"gt":82.0,"ct":89.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":88.73,"ug":96.0,"cap":0},{"t":2457,"gt":82.0,"ct":89.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2301.0,"pw":83.4,"ug":96.0,"cap":0},{"t":2462,"gt":76.0,"ct":87.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2444.0,"pw":77.54,"ug":96.0,"cap":0},{"t":2467,"gt":76.0,"ct":89.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.7,"ug":96.0,"cap":0},{"t":2472,"gt":75.0,"ct":86.9,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2476.0,"pw":76.39,"ug":96.0,"cap":0},{"t":2478,"gt":77.0,"ct":87.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":78.44,"ug":96.0,"cap":0},{"t":2483,"gt":82.0,"ct":89.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2366.0,"pw":77.78,"ug":96.0,"cap":0},{"t":2488,"gt":82.0,"ct":90.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2288.0,"pw":82.36,"ug":96.0,"cap":0},{"t":2493,"gt":76.0,"ct":88.6,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.37,"ug":96.0,"cap":0},{"t":2498,"gt":77.0,"ct":88.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":75.88,"ug":96.0,"cap":0},{"t":2503,"gt":77.0,"ct":89.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":77.03,"ug":96.0,"cap":0},{"t":2508,"gt":76.0,"ct":89.2,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":76.4,"ug":96.0,"cap":0},{"t":2513,"gt":82.0,"ct":88.3,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2457.0,"pw":78.74,"ug":96.0,"cap":0},{"t":2518,"gt":77.0,"ct":89.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2372.0,"pw":86.31,"ug":96.0,"cap":0},{"t":2523,"gt":78.0,"ct":88.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":78.59,"ug":96.0,"cap":0},{"t":2528,"gt":77.0,"ct":87.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2424.0,"pw":75.38,"ug":96.0,"cap":0},{"t":2533,"gt":82.0,"ct":90.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2463.0,"pw":93.17,"ug":96.0,"cap":0},{"t":2539,"gt":82.0,"ct":86.5,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2450.0,"pw":82.69,"ug":96.0,"cap":0},{"t":2544,"gt":82.0,"ct":84.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2431.0,"pw":65.2,"ug":96.0,"cap":0},{"t":2549,"gt":73.0,"ct":82.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":50.33,"ug":96.0,"cap":0},{"t":2554,"gt":73.0,"ct":82.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":58.38,"ug":96.0,"cap":0},{"t":2559,"gt":73.0,"ct":84.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2489.0,"pw":66.22,"ug":96.0,"cap":0},{"t":2564,"gt":81.0,"ct":87.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2470.0,"pw":80.21,"ug":96.0,"cap":0},{"t":2569,"gt":71.0,"ct":79.0,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2496.0,"pw":40.09,"ug":96.0,"cap":0},{"t":2574,"gt":70.0,"ct":77.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.68,"ug":96.0,"cap":0},{"t":2579,"gt":69.0,"ct":76.9,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.49,"ug":96.0,"cap":0},{"t":2584,"gt":69.0,"ct":76.5,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.24,"ug":96.0,"cap":0},{"t":2589,"gt":69.0,"ct":75.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.13,"ug":96.0,"cap":0},{"t":2595,"gt":68.0,"ct":74.9,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":39.09,"ug":96.0,"cap":0},{"t":2600,"gt":67.0,"ct":77.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.9,"ug":96.0,"cap":0},{"t":2605,"gt":67.0,"ct":78.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.8,"ug":96.0,"cap":0},{"t":2610,"gt":67.0,"ct":77.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.58,"ug":96.0,"cap":0},{"t":2615,"gt":66.0,"ct":77.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2515.0,"pw":38.64,"ug":96.0,"cap":0},{"t":2620,"gt":61.0,"ct":65.7,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":2405.0,"pw":14.19,"ug":0.0,"cap":0},{"t":2625,"gt":58.0,"ct":61.4,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":6.5,"ug":0.0,"cap":0},{"t":2630,"gt":57.0,"ct":59.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.47,"ug":0.0,"cap":1},{"t":2635,"gt":55.0,"ct":58.8,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.48,"ug":0.0,"cap":1},{"t":2640,"gt":54.0,"ct":57.1,"nv":60.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.43,"ug":0.0,"cap":0},{"t":2645,"gt":53.0,"ct":56.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.21,"ug":0.0,"cap":1},{"t":2650,"gt":53.0,"ct":55.8,"nv":59.85,"cfm":3354,"cfl":2808,"cfh":3900,"sm":208.0,"pw":5.18,"ug":0.0,"cap":1}],"bench":[{"ctx":512,"wall":46.7,"pt":243,"pf":5.2,"gen":5.16},{"ctx":1024,"wall":30.5,"pt":756,"pf":24.8,"gen":8.4},{"ctx":2048,"wall":32.7,"pt":1782,"pf":54.4,"gen":7.82},{"ctx":4096,"wall":36.2,"pt":3825,"pf":105.7,"gen":7.08},{"ctx":8192,"wall":48.0,"pt":7929,"pf":165.3,"gen":5.34},{"ctx":16384,"wall":58.6,"pt":16119,"pf":274.9,"gen":4.37},{"ctx":32768,"wall":79.9,"pt":32499,"pf":407.0,"gen":3.21},{"ctx":65536,"wall":144.3,"pt":65268,"pf":452.3,"gen":1.77},{"ctx":131072,"wall":242.9,"pt":130806,"pf":538.5,"gen":1.05},{"ctx":262144,"wall":572.4,"pt":261873,"pf":457.5,"gen":0.45}],"phases":[{"name":"download + engine boot","a":0,"b":51},{"name":"512 \u2013 32K sweep","a":51,"b":775},{"name":"64K / 128K","a":786,"b":1617},{"name":"256K","a":1627,"b":2638}],"t_end":2650};
+
+      const tip = document.getElementById('tip');
+      const mon = DATA.mon, phases = DATA.phases, bench = DATA.bench, T = DATA.t_end;
+
+      function svgEl(w, h, minw) {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        s.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        s.setAttribute('width', '100%');
+        s.style.minWidth = (minw || 640) + 'px';
+        return s;
+      }
+      const fmtT = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+
+      // ---------- shared timeline chart ----------
+      const PADL = 52, PADR = 14, PADT = 22, PADB = 24, W = 1000;
+      function timeline(mount, h, series, ymin, ymax, yticks, yfmt, extras) {
+        const H = h, iw = W - PADL - PADR, ih = H - PADT - PADB;
+        const x = t => PADL + t / T * iw, y = v => PADT + ih - (v - ymin) / (ymax - ymin) * ih;
+        const s = svgEl(W, H);
+        let g = '';
+        for (const p of phases) {
+          g += `<rect x="${x(p.a)}" y="${PADT}" width="${x(p.b) - x(p.a)}" height="${ih}" fill="var(--band)"/>`;
+          if (p.b - p.a > 200) g += `<text class="phlbl" x="${x((p.a + p.b) / 2)}" y="${PADT - 8}" text-anchor="middle">${p.name}</text>`;
+        }
+        for (const v of yticks) {
+          g += `<line x1="${PADL}" x2="${W - PADR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+          g += `<text x="${PADL - 8}" y="${y(v) + 3.5}" text-anchor="end">${yfmt(v)}</text>`;
+        }
+        for (let t = 0; t <= T; t += 600)
+          g += `<text x="${x(t)}" y="${H - 7}" text-anchor="middle">${fmtT(t)}</text>`;
+        if (extras) g += extras(x, y);
+        for (const sr of series) {
+          if (sr.band) {
+            let d = '';
+            for (const m of mon) { const v = m[sr.hi]; if (v == null) continue; d += (d ? 'L' : 'M') + x(m.t).toFixed(1) + ' ' + y(v).toFixed(1); }
+            for (let i = mon.length - 1; i >= 0; i--) { const v = mon[i][sr.lo]; if (v == null) continue; d += 'L' + x(mon[i].t).toFixed(1) + ' ' + y(v).toFixed(1); }
+            g += `<path d="${d}Z" fill="${sr.color}" opacity="0.18" stroke="none"/>`;
+          } else {
+            let d = '';
+            for (const m of mon) { const v = m[sr.key]; if (v == null) continue; d += (d ? 'L' : 'M') + x(m.t).toFixed(1) + ' ' + y(v).toFixed(1); }
+            g += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round"/>`;
+          }
+        }
+        g += `<line id="xh" x1="0" x2="0" y1="${PADT}" y2="${PADT + ih}" stroke="var(--crosshair)" stroke-width="1" visibility="hidden"/>`;
+        g += `<rect x="${PADL}" y="${PADT}" width="${iw}" height="${ih}" fill="transparent" class="hit"/>`;
+        s.innerHTML = g;
+        mount.appendChild(s);
+        return { svg: s, x, toT: px => Math.round((px - PADL) / iw * T) };
+      }
+
+      const tempC = timeline(document.getElementById('ch-temp'), 240, [
+        { key: 'nv', color: 'var(--nvme)' }, { key: 'ct', color: 'var(--cpu)' }, { key: 'gt', color: 'var(--gpu)' },
+      ], 35, 95, [40, 50, 60, 70, 80, 90], v => v + '°');
+
+      const clkC = timeline(document.getElementById('ch-clk'), 260, [
+        { band: true, lo: 'cfl', hi: 'cfh', color: 'var(--cpu)' },
+        { key: 'cfm', color: 'var(--cpu)' }, { key: 'sm', color: 'var(--gpu)' },
+      ], 0, 4200, [0, 1000, 2000, 3000, 4000], v => (v / 1000) + 'G', (x, y) => {
+        let e = ''; let run = null;
+        for (const m of mon) {
+          if (m.cap && run == null) run = m.t;
+          if ((!m.cap || m === mon[mon.length - 1]) && run != null) {
+            e += `<rect x="${x(run)}" y="${PADT}" width="${Math.max(2, x(m.t) - x(run))}" height="5" fill="var(--warn-ink)" opacity="0.8"/>`;
+            run = null;
+          }
+        }
+        return e;
+      });
+
+      const pwC = timeline(document.getElementById('ch-pw'), 190, [
+        { key: 'pw', color: 'var(--gpu)' },
+      ], 0, 100, [0, 25, 50, 75, 100], v => v + 'W');
+
+      function nearest(t) {
+        let best = mon[0], bd = 1e9;
+        for (const m of mon) { const d = Math.abs(m.t - t); if (d < bd) { bd = d; best = m; } }
+        return best;
+      }
+      const charts = [tempC, clkC, pwC];
+      for (const c of charts) {
+        const hit = c.svg.querySelector('.hit');
+        hit.addEventListener('mousemove', ev => {
+          const r = c.svg.getBoundingClientRect();
+          const px = (ev.clientX - r.left) / r.width * W;
+          const m = nearest(c.toT(px));
+          for (const o of charts) {
+            const l = o.svg.querySelector('#xh');
+            l.setAttribute('x1', o.x(m.t)); l.setAttribute('x2', o.x(m.t));
+            l.setAttribute('visibility', 'visible');
+          }
+          tip.style.display = 'block';
+          tip.style.left = Math.min(ev.clientX + 14, innerWidth - 230) + 'px';
+          tip.style.top = (ev.clientY + 14) + 'px';
+          tip.innerHTML = `<b>t+${fmtT(m.t)}</b>${m.cap ? ' · ⚠ power cap' : ''}<br>` +
+            `GPU ${m.gt}° · CPU ${m.ct}° · NVMe ${m.nv}°<br>` +
+            `CPU ${(m.cfm / 1000).toFixed(2)} GHz (${(m.cfl / 1000).toFixed(1)}–${(m.cfh / 1000).toFixed(1)})<br>` +
+            `SM ${m.sm} MHz · ${m.pw} W · util ${m.ug}%`;
+        });
+        hit.addEventListener('mouseleave', () => {
+          tip.style.display = 'none';
+          for (const o of charts) o.svg.querySelector('#xh').setAttribute('visibility', 'hidden');
+        });
+      }
+
+      // ---------- throughput vs context (log2 x) ----------
+      function ctxChart(mount, key, color, yfmt) {
+        const W2 = 470, H2 = 230, PL = 46, PR = 24, PT = 14, PB = 26;
+        const iw = W2 - PL - PR, ih = H2 - PT - PB;
+        const x0 = Math.log2(512), x1 = Math.log2(262144);
+        const vmax = Math.max(...bench.map(b => b[key])) * 1.12;
+        const x = c => PL + (Math.log2(c) - x0) / (x1 - x0) * iw, y = v => PT + ih - v / vmax * ih;
+        const s = svgEl(W2, H2, 320);
+        let g = '';
+        const step = vmax / 4;
+        for (let i = 0; i <= 4; i++) {
+          const v = i * step;
+          g += `<line x1="${PL}" x2="${W2 - PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+          g += `<text x="${PL - 7}" y="${y(v) + 3.5}" text-anchor="end">${yfmt(v)}</text>`;
+        }
+        for (const b of bench) {
+          const lbl = b.ctx >= 1024 ? (b.ctx / 1024) + 'K' : b.ctx;
+          g += `<text x="${x(b.ctx)}" y="${H2 - 8}" text-anchor="middle">${lbl}</text>`;
+        }
+        let d = '';
+        for (const b of bench) d += (d ? 'L' : 'M') + x(b.ctx).toFixed(1) + ' ' + y(b[key]).toFixed(1);
+        g += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+        for (const b of bench)
+          g += `<circle cx="${x(b.ctx)}" cy="${y(b[key])}" r="4" fill="${color}" stroke="var(--panel)" stroke-width="2"/>`;
+        s.innerHTML = g;
+        mount.appendChild(s);
+        s.addEventListener('mousemove', ev => {
+          const r = s.getBoundingClientRect();
+          const px = (ev.clientX - r.left) / r.width * W2;
+          let best = null, bd = 1e9;
+          for (const b of bench) { const dd = Math.abs(x(b.ctx) - px); if (dd < bd) { bd = dd; best = b; } }
+          if (bd > 40) { tip.style.display = 'none'; return; }
+          tip.style.display = 'block';
+          tip.style.left = Math.min(ev.clientX + 14, innerWidth - 230) + 'px';
+          tip.style.top = (ev.clientY + 14) + 'px';
+          tip.innerHTML = `<b>ctx ${best.ctx.toLocaleString()}</b><br>prefill ${best.pf} tok/s<br>gen ${best.gen} tok/s · wall ${best.wall}s`;
+        });
+        s.addEventListener('mouseleave', () => tip.style.display = 'none');
+      }
+      ctxChart(document.getElementById('ch-pf'), 'pf', 'var(--gpu)', v => Math.round(v));
+      ctxChart(document.getElementById('ch-gen'), 'gen', 'var(--gpu)', v => v.toFixed(1));
+
+      document.getElementById('tbody').innerHTML = bench.map(b =>
+        `<tr><td>${b.ctx.toLocaleString()}</td><td>${b.pt.toLocaleString()}</td>` +
+        `<td>${b.wall.toLocaleString()} s</td><td>${b.pf.toLocaleString()}</td><td>${b.gen}</td></tr>`).join('');
+    </script>
+  </body>
+</html>
