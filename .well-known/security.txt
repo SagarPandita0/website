@@ -1,0 +1,4 @@
+Contact: https://www.linkedin.com/in/sagar-pandita/
+Expires: 2027-08-20T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://sagarpandita.com/.well-known/security.txt

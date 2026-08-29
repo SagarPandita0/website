@@ -1,0 +1,13 @@
+# Response headers applied by Cloudflare Pages.
+# The CSP allowlist mirrors exactly what index.html loads: same-origin CSS and
+# JS, plus the inline data: URI favicon. Adding any external resource means
+# widening this policy first, or it will be blocked.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
