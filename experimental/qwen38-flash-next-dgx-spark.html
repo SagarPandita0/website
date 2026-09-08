@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Qwen3.8-Flash-Next on DGX Spark · Sagar Pandita</title>
-    <meta name="description" content="A cache-neutral comparison of Qwen3.8-Flash-Next under vLLM, SGLang, and llama.cpp on one NVIDIA DGX Spark, from 512 to 262,144 target tokens." />
+    <meta name="description" content="A comparison of Qwen3.8-Flash-Next under vLLM, SGLang, and llama.cpp on one NVIDIA DGX Spark, from 512 to 262,144 target tokens." />
     <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
     <meta property="og:type" content="article" />
@@ -92,7 +92,7 @@
 
         <section class="section">
           <div class="section-header"><p class="label">the punchline</p></div>
-          <p class="note">With cache policy matched, the two CUDA-native servers are close on fresh-prompt prefill. SGLang's durable advantage is single-stream decode; vLLM's is scaling at the top of this concurrency ladder. The GGUF build fits with far more headroom, but llama.cpp without MTP is much slower at long context.</p>
+          <p class="note">The two CUDA-native servers are close on fresh-prompt prefill. SGLang leads single-stream decode, while vLLM scales best at the top of this concurrency ladder. The GGUF build fits with far more headroom, but llama.cpp without MTP is much slower at long context.</p>
           <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
             <table class="data-table">
               <thead><tr><th>engine</th><th>256K TTFT</th><th>256K prefill</th><th>256K decode</th><th>c8 aggregate</th><th>memory floor</th></tr></thead>
@@ -104,12 +104,6 @@
             </table>
           </div>
           <p class="fine">The llama.cpp row is a deployment comparison, not an engine-only comparison: its quantization, format, kernels, and speculative-decoding configuration differ.</p>
-        </section>
-
-        <section class="section">
-          <div class="section-header"><p class="label">the cache trap</p></div>
-          <div class="callout"><b>The first pass was too good to be true.</b> SGLang's radix cache and llama.cpp's slot cache reused the growing deterministic prompt. vLLM already had prefix caching disabled. I discarded those performance rows and reran SGLang with <code>--disable-radix-cache</code> and llama.cpp with <code>cache_prompt: false</code> on every request.</div>
-          <p class="note">The correction was material. SGLang initially appeared to prefill the 256K target at 3,978 tok/s; the accepted result is 2,165 tok/s. In the corrected llama.cpp logs, server-side prompt-evaluation counts match the complete client prompt at every size. Cached discovery artifacts remain archived, but none feed this page.</p>
         </section>
 
         <section class="section">
@@ -192,7 +186,6 @@
             <li><b>vLLM scales farther at concurrency eight.</b> SGLang led aggregate throughput at one, two, and four streams; vLLM won the eight-stream row 162.7 to 151.5 tok/s.</li>
             <li><b>The GGUF buys headroom, not speed.</b> It completed 235,926 prompt tokens with 24.99 GiB still available, but 256K TTFT was 7.0× vLLM's and decode was 84.8% slower.</li>
             <li><b>Near-full context works in all three stacks.</b> Each completed 235,926 prompt tokens plus 256 generated tokens. I did not send an exactly 262,144-token prompt, so this does not prove the absolute boundary.</li>
-            <li><b>Cache defaults can dominate the result.</b> A growing-prefix benchmark needs an explicit cache policy before any engine comparison is meaningful.</li>
           </ul>
         </section>
 
