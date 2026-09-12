@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSeek-V4.1-Flash on DGX Spark · Sagar Pandita</title>
+    <meta name="description" content="How a 510 GB DeepSeek-V4.1-Flash checkpoint can run on one 128 GB NVIDIA DGX Spark by streaming FP4 experts from SSD or keeping a smaller CB3 expert set resident." />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://sagarpandita.com/experimental/deepseek-v41-flash-dgx-spark.html" />
+    <meta property="og:title" content="DeepSeek-V4.1-Flash on one DGX Spark: making 510 GB work" />
+    <meta property="og:description" content="Measured speed, quality, SSD traffic, routing coverage, power, thermals, and memory for two unusual ways of serving DeepSeek-V4.1-Flash on one DGX Spark." />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230b0d10'/%3E%3Cpath%20d='M9%2011l5%205-5%205'%20fill='none'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M17%2021h6'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      :root {
+        --fp4:#2a78d6; --cb3:#eb6834; --third:#1b9d72;
+        --gpu:#2a78d6; --cpu:#eb6834; --nvme:#1b9d72; --mem:#8c61c5;
+        --warn-bg:rgba(237,161,0,.14); --warn-ink:#8a5f00;
+        --good-bg:rgba(27,157,114,.10); --good-ink:#117a59;
+        --band-a:rgba(20,23,28,.045); --grid:#eceef2;
+        --crosshair:rgba(20,23,28,.35); --tip-bg:#14171c; --tip-ink:#f2f4f7;
+      }
+      @media (prefers-color-scheme:dark) {
+        :root {
+          --fp4:#5797df; --cb3:#ed8158; --third:#45b68e;
+          --gpu:#5797df; --cpu:#ed8158; --nvme:#45b68e; --mem:#ae88dc;
+          --warn-bg:rgba(201,133,0,.18); --warn-ink:#e0a63d;
+          --good-bg:rgba(69,182,142,.12); --good-ink:#67caa7;
+          --band-a:rgba(228,232,240,.05); --grid:#1a2029;
+          --crosshair:rgba(228,232,240,.4); --tip-bg:#05070a; --tip-ink:#e4e8f0;
+        }
+      }
+      .back-link{font-family:var(--font-mono);font-size:.82rem;text-decoration:none}
+      .back-link:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px}
+      .lab-hero h1{margin:.2rem 0 .9rem;font-size:clamp(1.7rem,4.5vw,2.3rem)}
+      .lede{color:var(--muted);max-width:69ch;margin:0}.lede+.lede{margin-top:.8rem}
+      .lede code,.section code{font-family:var(--font-mono);font-size:.85em}
+      .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin:1.6rem 0 0}
+      .fact{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.65rem .85rem}
+      .fact .k{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.06em;text-transform:lowercase;color:var(--muted);margin-bottom:.3rem}
+      .fact .k::before{content:'> ';color:var(--prompt)}
+      .fact .v{font-family:var(--font-mono);font-size:1.15rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.25}
+      .fact .u{font-size:.75rem;font-weight:400;color:var(--muted)}
+      .chart-panel{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.9rem .9rem .45rem;margin-bottom:.8rem;overflow-x:auto}
+      .chart-panel h3{font-family:var(--font-mono);font-size:.72rem;font-weight:600;letter-spacing:.05em;text-transform:lowercase;color:var(--muted);margin:0 0 .3rem;display:flex;align-items:center;gap:.85rem;flex-wrap:wrap}
+      .chart-panel svg{display:block}.chart-panel svg text{font-family:var(--font-mono);font-size:11px;fill:var(--muted)}
+      .duo{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}@media(max-width:42rem){.duo{grid-template-columns:1fr}}
+      .leg{display:inline-flex;align-items:center;gap:.35rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans);font-size:.78rem;font-weight:400;color:var(--muted)}
+      .sw{width:14px;height:3px;border-radius:2px;display:inline-block}
+      .callout{border-left:3px solid var(--warn-ink);background:var(--warn-bg);padding:.75rem .9rem;margin:1rem 0;color:var(--text)}
+      .callout.good{border-color:var(--good-ink);background:var(--good-bg)}
+      .tip{position:fixed;pointer-events:none;z-index:10;display:none;background:var(--tip-bg);color:var(--tip-ink);border-radius:6px;padding:.5rem .7rem;font-family:var(--font-mono);font-size:.72rem;line-height:1.55;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+      .tip b{font-weight:600}.data-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.78rem}
+      .data-table th{text-align:right;font-family:var(--font-mono);font-size:.63rem;font-weight:600;letter-spacing:.05em;text-transform:lowercase;color:var(--muted);padding:.45rem .55rem;border-bottom:1px solid var(--rule)}
+      .data-table td{text-align:right;padding:.45rem .55rem;border-bottom:1px solid var(--rule);white-space:nowrap}.data-table th:first-child,.data-table td:first-child{text-align:left}
+      .table-wrap{overflow-x:auto}.note{color:var(--muted);max-width:72ch;margin:0 0 1rem;font-size:.95rem}.fine{color:var(--muted);font-size:.8rem}
+      .findings{padding-left:1.2rem}.findings li+li{margin-top:.7rem}
+      .mode-switch{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .8rem}
+      .mode-switch button{appearance:none;background:transparent;color:var(--muted);border:1px solid var(--rule);border-radius:5px;padding:.35rem .65rem;font:600 .72rem var(--font-mono);cursor:pointer}
+      .mode-switch button[aria-pressed="true"]{color:var(--text);border-color:var(--prompt);box-shadow:inset 0 -2px 0 var(--prompt)}
+      .memory-map{display:grid;grid-template-columns:minmax(150px,1.1fr) 2fr;gap:.7rem;align-items:stretch;margin:1rem 0}
+      .memory-source,.memory-path{border:1px solid var(--rule);border-radius:6px;background:var(--panel);padding:.85rem}
+      .memory-source{display:flex;flex-direction:column;justify-content:center}.memory-source strong{font:600 1.45rem var(--font-mono)}
+      .memory-path{display:grid;gap:.55rem}.memory-row{display:grid;grid-template-columns:7rem 1fr;gap:.7rem;align-items:center}
+      .memory-row b{font:600 .72rem var(--font-mono)}.memory-bar{height:1.25rem;border-radius:4px;overflow:hidden;background:var(--rule);display:flex}
+      .memory-bar span{display:block;height:100%}.always{background:var(--third)}.resident{background:var(--fp4)}.working{background:var(--rule)}.kept{background:var(--cb3)}
+      @media(max-width:42rem){.memory-map{grid-template-columns:1fr}.memory-row{grid-template-columns:1fr}}
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <main id="content">
+      <div class="page-shell">
+        <header class="hero lab-hero">
+          <p class="eyebrow"><a class="back-link" href="../"><span class="prompt" aria-hidden="true">$</span>cd ~/sagarpandita.com</a></p>
+          <p class="eyebrow"><span class="prompt" aria-hidden="true">$</span>experimental / september 2026</p>
+          <h1>DeepSeek-V4.1-Flash on one DGX Spark: making 510 GB work</h1>
+          <p class="lede">DeepSeek-V4.1-Flash is far larger than the Spark's 128 GB of unified memory. The interesting part is that most of its mixture-of-experts weights are not needed at the same instant. A custom research engine uses that fact in two ways: keep the frequently chosen FP4 experts in memory and fetch the rest from SSD, or keep a smaller, 3-bit set of experts entirely resident.</p>
+          <p class="lede">I ran both strategies on one DGX Spark and measured generation speed, first-token latency, expert hit rate, physical SSD traffic, held-out next-token quality, routing coverage, memory pressure, thermals, clocks, and power. This page is about the mechanism and its trade-off—not a claim that the full checkpoint simply fits in memory.</p>
+          <div class="facts">
+            <div class="fact"><div class="k">checkpoint on disk</div><div class="v">510.3 <span class="u">GB</span></div></div>
+            <div class="fact"><div class="k">cb3 code decode</div><div class="v">24.08 <span class="u">tok/s</span></div></div>
+            <div class="fact"><div class="k">cb3 expert reads</div><div class="v">0 <span class="u">GB/request</span></div></div>
+            <div class="fact"><div class="k">full fp4 quality run</div><div class="v">3.818 <span class="u">TB read</span></div></div>
+            <div class="fact"><div class="k">thermal throttling</div><div class="v">none</div></div>
+          </div>
+        </header>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the idea in plain english</p></div>
+          <p class="note">A normal dense model uses every feed-forward block for every token. This model instead has 384 small specialist blocks—“experts”—in each of 40 layers and routes each token through only six. That leaves room for an unusual memory hierarchy.</p>
+          <div class="memory-map" aria-label="Two ways the experiment fits DeepSeek-V4.1-Flash around the Spark memory limit">
+            <div class="memory-source"><span class="fine">checkpoint</span><strong>510 GB</strong><span class="fine">larger than 128 GB unified memory</span></div>
+            <div class="memory-path">
+              <div class="memory-row"><b>full FP4</b><div><div class="memory-bar"><span class="always" style="width:15%" title="always-resident weights"></span><span class="resident" style="width:63%" title="resident FP4 expert arena"></span><span class="working" style="width:22%" title="working headroom"></span></div><span class="fine">81 GB expert arena; cold experts stay on NVMe and rotate through transient slots</span></div></div>
+              <div class="memory-row"><b>40% CB3</b><div><div class="memory-bar"><span class="always" style="width:15%" title="always-resident weights"></span><span class="kept" style="width:71%" title="resident CB3 expert arena"></span><span class="working" style="width:14%" title="working headroom"></span></div><span class="fine">6,160 profiled experts are repacked to 3-bit codebooks and stay resident</span></div></div>
+            </div>
+          </div>
+          <p class="fine">Memory bars: green is the always-resident model core, blue or orange is the expert arena, and gray is working headroom.</p>
+          <p>The full-FP4 path is the faithful one: no expert is removed, and every expert keeps its native FP4 representation. An 81 GB arena holds 3,910 hot experts plus a 400-slot transient ring. A miss triggers a direct read from local NVMe. The transient ring is important during prompt processing, when many experts appear briefly; those one-off reads do not displace the hot decode set.</p>
+          <p>The faster path starts with a routing trace over 10,760 tokens. It keeps 154 of the 384 experts in every layer, then repacks those 6,160 experts into a per-row 3-bit codebook format called CB3. They occupy about 89 GB and stay resident. That removes expert SSD reads, but it also changes the model: 60% of the experts can no longer be selected, and the remaining expert weights are more compressed.</p>
+          <div class="callout"><b>The trade-off:</b> FP4 streaming preserves the expert set but waits on storage. CB3 removes that wait and is 2.5–3.3× faster here, at a measurable next-token quality cost.</div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the punchline</p></div>
+          <p class="note">Short code and prose prompts generated 512 tokens; the random test used 8,172 prompt tokens and generated 256. Code and prose are medians of two runs. Random 8K is one run.</p>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table">
+              <thead><tr><th>workload</th><th>mode</th><th>TTFT</th><th>decode</th><th>expert hit</th><th>expert NVMe</th></tr></thead>
+              <tbody>
+                <tr><td>code</td><td>full FP4 · SSD</td><td>5.70 s</td><td>7.24 tok/s</td><td>81.94%</td><td>470.30 GB</td></tr>
+                <tr><td>code</td><td>40% CB3 · resident</td><td>1.63 s</td><td>24.08 tok/s</td><td>100%</td><td>0 GB</td></tr>
+                <tr><td>prose</td><td>full FP4 · SSD</td><td>5.29 s</td><td>5.28 tok/s</td><td>88.96%</td><td>492.90 GB</td></tr>
+                <tr><td>prose</td><td>40% CB3 · resident</td><td>1.46 s</td><td>13.28 tok/s</td><td>100%</td><td>0 GB</td></tr>
+                <tr><td>random 8K</td><td>full FP4 · SSD</td><td>65.37 s</td><td>8.08 tok/s</td><td>85.42%</td><td>389.87 GB</td></tr>
+                <tr><td>random 8K</td><td>40% CB3 · resident</td><td>37.75 s</td><td>26.88 tok/s</td><td>100%</td><td>0 GB</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="fine">“Expert NVMe” is the engine's logical expert-read counter for that request, not total process I/O. The matched full-FP4 quality run separately recorded 3.818 TB of physical process reads.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">speed &amp; storage</p></div>
+          <p class="note">Hover a bar for the exact measured value. Higher is better for decode throughput; lower is better for first-token time and storage traffic.</p>
+          <div class="duo">
+            <div class="chart-panel"><h3>decode · tok/s</h3><div id="ch-decode"></div></div>
+            <div class="chart-panel"><h3>time to first token · seconds</h3><div id="ch-ttft"></div></div>
+          </div>
+          <div class="chart-panel"><h3>logical expert reads · GB per request</h3><div id="ch-nvme"></div></div>
+          <div class="callout good"><b>Why CB3 moves so much faster:</b> speculative acceptance stayed similar in code and prose, while the expert hit rate became 100%. The large gain therefore lines up with removing expert loads, not with the draft model suddenly predicting much farther ahead.</div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the quality bill</p></div>
+          <p class="note">Both arms scored the same held-out tokens with the same dense FP4 components, FP8 output head, top-six routing, 512-token limit, and attention replay. Lower negative log-likelihood is better; higher top-one accuracy is better.</p>
+          <div class="duo">
+            <div class="chart-panel"><h3>mean negative log-likelihood · lower is better</h3><div id="ch-nll"></div></div>
+            <div class="chart-panel"><h3>top-one next-token accuracy · percent</h3><div id="ch-top1"></div></div>
+          </div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table">
+              <thead><tr><th>slice</th><th>tokens</th><th>FP4 NLL</th><th>CB3 NLL</th><th>NLL change</th><th>top-one change</th></tr></thead>
+              <tbody>
+                <tr><td>coding</td><td>5,423</td><td>1.803</td><td>1.845</td><td>+0.042 nats</td><td>−2.01 points</td></tr>
+                <tr><td>general</td><td>5,231</td><td>3.113</td><td>3.226</td><td>+0.113 nats</td><td>−2.64 points</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">The penalty is modest on this corpus, but it is not zero—and it is larger on general text than code. These token-level measurements are a controlled comparison, not a substitute for full task benchmarks.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">why the hot set works</p></div>
+          <p class="note">The trace ranks experts by how often the model used them. The blue line estimates a token-level LRU hit rate at each FP4 expert budget; orange asks a harder question: did all six experts needed by a layer hit together? The green line is the static share of routed calls covered by the ranked set.</p>
+          <div class="chart-panel"><h3>routing coverage · percent <span class="leg"><span class="sw" style="background:var(--fp4)"></span>token LRU hit</span><span class="leg"><span class="sw" style="background:var(--cb3)"></span>all-six block hit</span><span class="leg"><span class="sw" style="background:var(--third)"></span>static coverage</span></h3><div id="ch-coverage"></div></div>
+          <p class="fine">The tooltip converts each expert count to its native-FP4 resident size. Around 4,000 FP4 experts use 75.2 GB and cover 74.4% of routed calls statically; the simulated token LRU hit is 84.8%. CB3 is not plotted on this FP4 memory curve because each kept expert is smaller and the other experts are deliberately unavailable.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">thermals, power &amp; memory</p></div>
+          <p class="note">Every benchmark phase had a five-second device monitor. Choose a phase below; temperature, power, and available-memory charts share a synchronized crosshair. Gaps in the source monitor remain gaps on the chart.</p>
+          <div class="mode-switch" role="group" aria-label="Telemetry phase">
+            <button type="button" data-mode="fp4serve" aria-pressed="true">FP4 serving</button>
+            <button type="button" data-mode="cb3serve" aria-pressed="false">CB3 serving</button>
+            <button type="button" data-mode="trace" aria-pressed="false">routing trace</button>
+            <button type="button" data-mode="fp4quality" aria-pressed="false">FP4 quality</button>
+            <button type="button" data-mode="cb3quality" aria-pressed="false">CB3 quality</button>
+          </div>
+          <div class="chart-panel"><h3>temperature · °c <span class="leg"><span class="sw" style="background:var(--gpu)"></span>GPU</span><span class="leg"><span class="sw" style="background:var(--cpu)"></span>CPU zone max</span><span class="leg"><span class="sw" style="background:var(--nvme)"></span>NVMe max</span></h3><div id="ch-temp"></div></div>
+          <div class="duo">
+            <div class="chart-panel"><h3>gpu board power · w</h3><div id="ch-power"></div></div>
+            <div class="chart-panel"><h3>available unified memory · GiB</h3><div id="ch-memory"></div></div>
+          </div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <h3>monitor summary</h3>
+            <table class="data-table">
+              <thead><tr><th>phase</th><th>samples</th><th>GPU peak</th><th>power peak</th><th>memory floor</th><th>swap peak</th><th>SW power-cap flags</th></tr></thead>
+              <tbody>
+                <tr><td>FP4 serving</td><td>223</td><td>67°C</td><td>46.15 W</td><td>16.25 GiB</td><td>0 GiB</td><td>0</td></tr>
+                <tr><td>CB3 serving</td><td>105</td><td>73°C</td><td>55.27 W</td><td>3.19 GiB</td><td>0.27 GiB</td><td>0</td></tr>
+                <tr><td>routing trace</td><td>533</td><td>50°C</td><td>51.22 W</td><td>76.25 GiB</td><td>1.37 GiB</td><td>4</td></tr>
+                <tr><td>FP4 quality</td><td>123</td><td>65°C</td><td>31.08 W</td><td>19.52 GiB</td><td>0.34 GiB</td><td>0</td></tr>
+                <tr><td>CB3 quality</td><td>89</td><td>71°C</td><td>52.69 W</td><td>2.13 GiB</td><td>1.41 GiB</td><td>1</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="fine">No phase recorded thermal throttling. “SW Power Cap” is the NVIDIA software power-limit flag, not a thermal limit.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">test shape</p></div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table">
+              <thead><tr><th></th><th>full FP4 · SSD streaming</th><th>40% CB3 · resident</th></tr></thead>
+              <tbody>
+                <tr><td>routed experts available</td><td>15,360 · 100%</td><td>6,160 · 40%</td></tr>
+                <tr><td>expert representation</td><td>native FP4 · 18.8 MB each</td><td>per-row codebook 3-bit · 14.45 MB each</td></tr>
+                <tr><td>expert arena</td><td>81.0 GB · 3,910 LRU + 400 transient</td><td>90.5 GB · all allowed experts resident</td></tr>
+                <tr><td>dense components</td><td>FP4 attention + Wo_a · FP8 head</td><td>same</td></tr>
+                <tr><td>routing</td><td>top six · unpruned</td><td>top six among kept experts</td></tr>
+                <tr><td>speculative decoding</td><td>DSpark · five-token draft</td><td>same</td></tr>
+                <tr><td>maximum configured sequence</td><td>32,768</td><td>32,768</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">The model checkpoint was 510,313,423,455 bytes and all 48 indexed weight shards were validated before the run. The software stack used PyTorch 2.13.0+cu130, Transformers 5.17.0, Triton 3.7.1, and the custom engine at commit <code>8bb38e1</code>.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">what I would take from this</p></div>
+          <ul class="findings">
+            <li><b>The model can run on one Spark, but storage is part of the computer.</b> Full FP4 generation is practical only because the engine treats unified memory and NVMe as one managed hierarchy.</li>
+            <li><b>Expert locality is real enough to exploit.</b> A 28% FP4 resident arena produced 82–89% measured expert hit rates on the three serving workloads.</li>
+            <li><b>All-resident CB3 changes the bottleneck.</b> It eliminated expert reads and lifted decode to 13.28–26.88 tok/s, but used nearly all available memory.</li>
+            <li><b>The speedup has a quality price.</b> The matched held-out test lost 2.01 top-one points on code and 2.64 on general text. Whether that is acceptable depends on the workload.</li>
+            <li><b>This is a specialized research runtime.</b> The result is interesting because it stretches one small system unusually far, not because it replaces mature general-purpose serving stacks.</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">caveats &amp; sources</p></div>
+          <p class="note">One DGX Spark, one custom work-in-progress engine, two runs for each short workload, and one random-8K run per arm. The prompts are small diagnostic slices, not standardized downstream evaluations. CB3 changes both expert availability and expert precision, so its speed and quality effects cannot be assigned to either change alone. The routing trace and held-out quality corpus are finite samples; other domains may choose different experts and pay a different penalty.</p>
+          <p class="note">Sources: <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">DeepSeek-V4.1-Flash model card</a> · <a href="https://github.com/0xBakeer/deepseek-v41-flash-spark">the experimental DGX Spark engine</a>. All charts and tables on this page use the measurements from the benchmark run described above.</p>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer"><div class="site-footer__inner"><span>© 2026 Sagar Pandita</span></div></footer>
+    <div class="tip" id="tip" role="tooltip"></div>
+    <script src="deepseek-v41-flash-data.js"></script>
+    <script>
+      const DATA=window.DEEPSEEK_DATA;
+      const MODES=['fp4','cb3'];
+      const LABEL={fp4:'full FP4 · SSD',cb3:'40% CB3 · resident'};
+      const COLOR={fp4:'var(--fp4)',cb3:'var(--cb3)'};
+      const T_LABEL={fp4serve:'FP4 serving',cb3serve:'CB3 serving',trace:'routing trace',fp4quality:'FP4 quality',cb3quality:'CB3 quality'};
+      const NS='http://www.w3.org/2000/svg';
+      const tip=document.getElementById('tip');
+
+      function svgEl(w,h,minw){const s=document.createElementNS(NS,'svg');s.setAttribute('viewBox',`0 0 ${w} ${h}`);s.setAttribute('width','100%');s.style.minWidth=(minw||320)+'px';return s}
+      function showTip(ev,html){tip.style.display='block';tip.style.left=Math.min(ev.clientX+14,innerWidth-300)+'px';tip.style.top=Math.min(ev.clientY+14,innerHeight-140)+'px';tip.innerHTML=html}
+      function hideTip(){tip.style.display='none'}
+      function fmtTime(t){return `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`}
+      function addModeLegend(id){const h=document.getElementById(id).parentElement.querySelector('h3');for(const mode of MODES)h.insertAdjacentHTML('beforeend',`<span class="leg"><span class="sw" style="background:${COLOR[mode]}"></span>${LABEL[mode]}</span>`)}
+
+      function groupedBar(id,key,max,yfmt,tipfmt){
+        const W=id==='ch-nvme'?960:470,H=255,PL=52,PR=16,PT=18,PB=42,iw=W-PL-PR,ih=H-PT-PB,s=svgEl(W,H,id==='ch-nvme'?620:360);
+        const labels=DATA.workloads.labels,n=labels.length,group=iw/n,bar=Math.min(44,group*.28),y=v=>PT+ih-v/max*ih;let g='';
+        for(const f of [0,.25,.5,.75,1]){const v=f*max;g+=`<line x1="${PL}" x2="${W-PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${PL-7}" y="${y(v)+3.5}" text-anchor="end">${yfmt(v)}</text>`}
+        labels.forEach((label,i)=>{const cx=PL+group*(i+.5);g+=`<text x="${cx}" y="${H-12}" text-anchor="middle">${label}</text>`;MODES.forEach((mode,j)=>{const value=DATA.workloads[mode][i][key],x=cx+(j-.5)*(bar+5)-bar/2,h=ih-y(value)+PT;g+=`<rect class="bar-hit" data-mode="${mode}" data-i="${i}" x="${x}" y="${y(value)}" width="${bar}" height="${Math.max(h,1)}" rx="2" fill="${COLOR[mode]}"/>`})});
+        g+=`<rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;document.getElementById(id).appendChild(s);
+        s.querySelectorAll('.bar-hit').forEach(el=>{el.addEventListener('mousemove',ev=>{const mode=el.dataset.mode,i=Number(el.dataset.i),d=DATA.workloads[mode][i];showTip(ev,`<b>${LABEL[mode]} · ${labels[i]}</b><br>${tipfmt(d[key])}`)});el.addEventListener('mouseleave',hideTip)})
+      }
+
+      function qualityBar(id,key,max,yfmt){
+        const W=470,H=255,PL=52,PR=16,PT=18,PB=42,iw=W-PL-PR,ih=H-PT-PB,s=svgEl(W,H,360),labels=DATA.quality.labels,group=iw/2,bar=54,y=v=>PT+ih-v/max*ih;let g='';
+        for(const f of [0,.25,.5,.75,1]){const v=f*max;g+=`<line x1="${PL}" x2="${W-PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${PL-7}" y="${y(v)+3.5}" text-anchor="end">${yfmt(v)}</text>`}
+        labels.forEach((label,i)=>{const cx=PL+group*(i+.5);g+=`<text x="${cx}" y="${H-12}" text-anchor="middle">${label}</text>`;MODES.forEach((mode,j)=>{const raw=DATA.quality[mode][i],value=key==='top1_acc'?raw[key]*100:raw[key],x=cx+(j-.5)*(bar+7)-bar/2,h=ih-y(value)+PT;g+=`<rect class="q-hit" data-mode="${mode}" data-i="${i}" x="${x}" y="${y(value)}" width="${bar}" height="${h}" rx="2" fill="${COLOR[mode]}"/>`})});
+        g+=`<rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;document.getElementById(id).appendChild(s);
+        s.querySelectorAll('.q-hit').forEach(el=>{el.addEventListener('mousemove',ev=>{const mode=el.dataset.mode,i=Number(el.dataset.i),d=DATA.quality[mode][i],value=key==='top1_acc'?(d[key]*100).toFixed(2)+'%':d[key].toFixed(3)+' nats';showTip(ev,`<b>${LABEL[mode]} · ${labels[i]}</b><br>${value} · ${d.n.toLocaleString()} scored tokens`)});el.addEventListener('mouseleave',hideTip)})
+      }
+
+      function coverageChart(){
+        const W=960,H=285,PL=55,PR=18,PT=18,PB=35,iw=W-PL-PR,ih=H-PT-PB,s=svgEl(W,H,620),rows=DATA.coverage,x=v=>PL+(v-1000)/7000*iw,y=v=>PT+ih-(v-30)/70*ih;let g='';
+        for(const v of [40,50,60,70,80,90,100])g+=`<line x1="${PL}" x2="${W-PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${PL-7}" y="${y(v)+3.5}" text-anchor="end">${v}%</text>`;
+        for(const d of rows)g+=`<text x="${x(d.experts)}" y="${H-10}" text-anchor="middle">${d.experts/1000}K</text>`;
+        for(const series of [{key:'token',color:'var(--fp4)'},{key:'block',color:'var(--cb3)'},{key:'static',color:'var(--third)'}]){let p='';for(const d of rows)p+=(p?'L':'M')+x(d.experts)+' '+y(d[series.key]);g+=`<path d="${p}" fill="none" stroke="${series.color}" stroke-width="2.4"/>`;for(const d of rows)g+=`<circle class="cov-hit" data-i="${rows.indexOf(d)}" cx="${x(d.experts)}" cy="${y(d[series.key])}" r="5" fill="transparent"/>`}
+        const budgetX=x(4000);g+=`<line x1="${budgetX}" x2="${budgetX}" y1="${PT}" y2="${PT+ih}" stroke="var(--crosshair)" stroke-dasharray="4 4"/><text x="${budgetX+6}" y="${PT+13}">≈ FP4 arena</text><rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;document.getElementById('ch-coverage').appendChild(s);
+        s.addEventListener('mousemove',ev=>{const r=s.getBoundingClientRect(),px=(ev.clientX-r.left)/r.width*W;let best=rows[0],dist=Infinity;for(const d of rows){const delta=Math.abs(x(d.experts)-px);if(delta<dist){dist=delta;best=d}}if(dist>75)return hideTip();showTip(ev,`<b>${best.experts.toLocaleString()} resident FP4 experts · ${best.gb} GB</b><br>token LRU hit ${best.token.toFixed(2)}%<br>all-six block hit ${best.block.toFixed(2)}%<br>static coverage ${best.static.toFixed(2)}%`)});s.addEventListener('mouseleave',hideTip)
+      }
+
+      let telemetryCharts=[];
+      function timeline(mount,rows,end,series,ymin,ymax,ticks,yfmt){
+        const W=mount.id==='ch-temp'?960:470,H=235,PL=52,PR=16,PT=16,PB=27,iw=W-PL-PR,ih=H-PT-PB,x=t=>PL+t/end*iw,y=v=>PT+ih-(v-ymin)/(ymax-ymin)*ih,s=svgEl(W,H,mount.id==='ch-temp'?620:360);let g='';
+        for(const v of ticks)g+=`<line x1="${PL}" x2="${W-PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${PL-7}" y="${y(v)+3.5}" text-anchor="end">${yfmt(v)}</text>`;
+        for(let i=0;i<=4;i++){const t=end*i/4;g+=`<text x="${x(t)}" y="${H-8}" text-anchor="middle">${fmtTime(t)}</text>`}
+        for(const sr of series){let p='';for(let i=0;i<rows.length;i++){const d=rows[i],v=d[sr.key];if(v==null)continue;if(d.gap&&p){g+=`<path d="${p}" fill="none" stroke="${sr.color}" stroke-width="2"/>`;p=''}p+=(p?'L':'M')+x(d.t).toFixed(1)+' '+y(v).toFixed(1);if(i===rows.length-1&&p)g+=`<path d="${p}" fill="none" stroke="${sr.color}" stroke-width="2"/>`}}
+        g+=`<line class="cross" x1="0" x2="0" y1="${PT}" y2="${PT+ih}" stroke="var(--crosshair)" visibility="hidden"/><rect class="hit" x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="transparent"/><rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;mount.replaceChildren(s);return{svg:s,x,toT:px=>(px-PL)/iw*end}
+      }
+      function renderTelemetry(mode){
+        const data=DATA.telemetry[mode],rows=data.rows,end=data.end,memMax=Math.max(128,...rows.map(d=>d.mem));
+        telemetryCharts=[
+          timeline(document.getElementById('ch-temp'),rows,end,[{key:'nv',color:'var(--nvme)'},{key:'ct',color:'var(--cpu)'},{key:'gt',color:'var(--gpu)'}],30,90,[40,50,60,70,80,90],v=>v+'°'),
+          timeline(document.getElementById('ch-power'),rows,end,[{key:'pw',color:'var(--gpu)'}],0,65,[0,20,40,60],v=>v+'W'),
+          timeline(document.getElementById('ch-memory'),rows,end,[{key:'mem',color:'var(--mem)'}],0,memMax,[0,32,64,96,128],v=>v)
+        ];
+        function nearest(t){let best=rows[0],dist=Infinity;for(const d of rows){const delta=Math.abs(d.t-t);if(delta<dist){dist=delta;best=d}}return best}
+        for(const chart of telemetryCharts){const hit=chart.svg.querySelector('.hit');hit.addEventListener('mousemove',ev=>{const r=chart.svg.getBoundingClientRect(),px=(ev.clientX-r.left)/r.width*(chart.svg.viewBox.baseVal.width),d=nearest(chart.toT(px));for(const other of telemetryCharts){const line=other.svg.querySelector('.cross');line.setAttribute('x1',other.x(d.t));line.setAttribute('x2',other.x(d.t));line.setAttribute('visibility','visible')}showTip(ev,`<b>${T_LABEL[mode]} · t+${fmtTime(d.t)}</b>${d.cap?' · SW power cap':''}<br>${d.phase}<br>GPU ${d.gt}° · CPU ${d.ct}° · NVMe ${d.nv}°<br>${d.pw} W · ${d.ug}% GPU · ${d.sm} MHz<br>${d.mem} GiB free · ${d.swap} GiB swap`)});hit.addEventListener('mouseleave',()=>{hideTip();for(const other of telemetryCharts)other.svg.querySelector('.cross').setAttribute('visibility','hidden')})}
+      }
+
+      groupedBar('ch-decode','decode',30,v=>Math.round(v),v=>`${v.toFixed(2)} tok/s`);
+      groupedBar('ch-ttft','ttft',70,v=>Math.round(v),v=>`${v.toFixed(2)} seconds`);
+      groupedBar('ch-nvme','nvme',550,v=>Math.round(v),v=>`${v.toFixed(2)} GB`);
+      qualityBar('ch-nll','mean_nll',3.5,v=>v.toFixed(1));
+      qualityBar('ch-top1','top1_acc',70,v=>Math.round(v)+'%');
+      for(const id of ['ch-decode','ch-ttft','ch-nvme','ch-nll','ch-top1'])addModeLegend(id);
+      coverageChart();renderTelemetry('fp4serve');
+      document.querySelectorAll('.mode-switch button').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('.mode-switch button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));renderTelemetry(button.dataset.mode)}));
+    </script>
+  </body>
+</html>
