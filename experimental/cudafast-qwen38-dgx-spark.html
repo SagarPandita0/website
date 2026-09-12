@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cuda.fast on DGX Spark: real speedup, narrow claim · Sagar Pandita</title>
+    <meta name="description" content="An independent DGX Spark test of cuda.fast for Qwen3.8-Flash-Next: how the engine works, what 108.5% faster means, and where the advertising needs context." />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://sagarpandita.com/experimental/cudafast-qwen38-dgx-spark.html" />
+    <meta property="og:title" content="cuda.fast on DGX Spark: real speedup, narrow claim" />
+    <meta property="og:description" content="I ran the public engine three times, captured the whole box, and audited the 108.5% faster headline." />
+    <meta property="og:image" content="https://sagarpandita.com/assets/cudafast-qwen38-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://sagarpandita.com/assets/cudafast-qwen38-card.png" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230b0d10'/%3E%3Cpath%20d='M9%2011l5%205-5%205'%20fill='none'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M17%2021h6'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      :root {
+        --cuda:#2a78d6; --mtp:#9a5bd6; --ssd:#1b9d72; --serial:#9097a3;
+        --gpu:#2a78d6; --power:#eb6834; --memory:#1b9d72;
+        --good-bg:rgba(27,157,114,.11); --good-ink:#087252;
+        --context-bg:rgba(237,161,0,.12); --context-ink:#805900;
+        --grid:#eceef2; --tip-bg:#14171c; --tip-ink:#f2f4f7;
+      }
+      @media (prefers-color-scheme:dark) {
+        :root {
+          --cuda:#5797df; --mtp:#b985e8; --ssd:#45b68e; --serial:#858e9b;
+          --gpu:#5797df; --power:#ed8158; --memory:#45b68e;
+          --good-bg:rgba(42,178,132,.13); --good-ink:#61c8a3;
+          --context-bg:rgba(201,133,0,.17); --context-ink:#e0a63d;
+          --grid:#1a2029; --tip-bg:#05070a; --tip-ink:#e4e8f0;
+        }
+      }
+      .back-link{font-family:var(--font-mono);font-size:.82rem;text-decoration:none}
+      .back-link:hover{color:var(--accent-hover);text-decoration:underline;text-underline-offset:3px}
+      .lab-hero h1{margin:.2rem 0 .9rem;font-size:clamp(1.7rem,4.5vw,2.4rem)}
+      .lede{color:var(--muted);max-width:70ch;margin:0}.lede+.lede{margin-top:.8rem}
+      .lede code,.section code{font-family:var(--font-mono);font-size:.85em}
+      .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:.6rem;margin:1.6rem 0 0}
+      .fact{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.65rem .85rem}
+      .fact .k{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.06em;text-transform:lowercase;color:var(--muted);margin-bottom:.3rem}
+      .fact .k::before{content:'> ';color:var(--prompt)}
+      .fact .v{font-family:var(--font-mono);font-size:1.15rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.25}
+      .fact .u{font-size:.75rem;font-weight:400;color:var(--muted)}
+      .verdict{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,.42fr);gap:1rem;align-items:stretch}
+      .verdict-copy,.verdict-stamp{border:1px solid var(--rule);border-radius:6px;padding:1rem;background:var(--panel)}
+      .verdict-copy{border-left:3px solid var(--good-ink)}
+      .verdict-copy p{margin:.2rem 0 0;max-width:62ch}
+      .verdict-stamp{display:flex;flex-direction:column;justify-content:center;background:var(--good-bg)}
+      .verdict-stamp strong{font:700 1.1rem var(--font-mono);color:var(--good-ink)}
+      .verdict-stamp span{color:var(--muted);font-size:.82rem;margin-top:.35rem}
+      @media(max-width:42rem){.verdict{grid-template-columns:1fr}}
+      .pipeline{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:.55rem;align-items:stretch;margin:.8rem 0 1rem}
+      .pipe{border:1px solid var(--rule);background:var(--panel);border-radius:6px;padding:.8rem;position:relative;min-height:92px}
+      .pipe:not(:last-child)::after{content:'→';position:absolute;right:-.48rem;top:42%;z-index:2;color:var(--muted);font-family:var(--font-mono);background:var(--bg);padding:0 .08rem}
+      .pipe b{display:block;font:600 .73rem var(--font-mono);margin-bottom:.35rem}.pipe span{font-size:.78rem;color:var(--muted);line-height:1.45;display:block}
+      .pipe:nth-child(2){border-top:3px solid var(--ssd)}.pipe:nth-child(4){border-top:3px solid var(--mtp)}.pipe:nth-child(5){border-top:3px solid var(--cuda)}
+      @media(max-width:54rem){.pipeline{grid-template-columns:1fr 1fr}.pipe:not(:last-child)::after{display:none}}
+      @media(max-width:32rem){.pipeline{grid-template-columns:1fr}}
+      .chart-panel{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.9rem .9rem .5rem;margin-bottom:.8rem;overflow-x:auto}
+      .chart-panel h3{font-family:var(--font-mono);font-size:.72rem;font-weight:600;letter-spacing:.05em;text-transform:lowercase;color:var(--muted);margin:0 0 .35rem;display:flex;align-items:center;gap:.85rem;flex-wrap:wrap}
+      .chart-panel svg{display:block}.chart-panel svg text{font-family:var(--font-mono);font-size:11px;fill:var(--muted)}
+      .duo{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}@media(max-width:42rem){.duo{grid-template-columns:1fr}}
+      .leg{display:inline-flex;align-items:center;gap:.35rem;text-transform:none;letter-spacing:0;font-family:var(--font-sans);font-size:.78rem;font-weight:400;color:var(--muted)}
+      .sw{width:14px;height:3px;border-radius:2px;display:inline-block}
+      .note{color:var(--muted);max-width:74ch;margin:0 0 1rem;font-size:.95rem}.fine{color:var(--muted);font-size:.8rem}
+      .data-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.78rem}
+      .data-table th{text-align:right;font-family:var(--font-mono);font-size:.63rem;font-weight:600;letter-spacing:.05em;text-transform:lowercase;color:var(--muted);padding:.45rem .55rem;border-bottom:1px solid var(--rule)}
+      .data-table td{text-align:right;padding:.45rem .55rem;border-bottom:1px solid var(--rule);white-space:nowrap}.data-table th:first-child,.data-table td:first-child{text-align:left}
+      .table-wrap{overflow-x:auto}.audit td:nth-child(2){white-space:normal;text-align:left;min-width:240px}.audit td:last-child{text-align:left;font-weight:600}
+      .tag{display:inline-block;border-radius:99px;padding:.16rem .45rem;font:600 .65rem var(--font-mono)}
+      .tag.good{background:var(--good-bg);color:var(--good-ink)}.tag.context{background:var(--context-bg);color:var(--context-ink)}
+      .formula{border:1px solid var(--rule);background:var(--panel);border-radius:6px;padding:1rem;margin:.8rem 0}
+      .formula code{display:block;font-size:clamp(.8rem,2.6vw,1rem);overflow-wrap:anywhere}.formula p{margin:.65rem 0 0;color:var(--muted);font-size:.86rem}
+      .findings{padding-left:1.2rem}.findings li+li{margin-top:.7rem}
+      .tip{position:fixed;pointer-events:none;z-index:10;display:none;background:var(--tip-bg);color:var(--tip-ink);border-radius:6px;padding:.5rem .7rem;font-family:var(--font-mono);font-size:.72rem;line-height:1.55;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+      .tip b{font-weight:600}
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <main id="content">
+      <div class="page-shell">
+        <header class="hero lab-hero">
+          <p class="eyebrow"><a class="back-link" href="../"><span class="prompt" aria-hidden="true">$</span>cd ~/sagarpandita.com</a></p>
+          <p class="eyebrow"><span class="prompt" aria-hidden="true">$</span>experimental / september 2026</p>
+          <h1>cuda.fast on DGX Spark: real speedup, narrow claim</h1>
+          <p class="lede">The cuda.fast leaderboard says Qwen3.8-Flash-Next now runs 108.5% faster on one DGX Spark. I built the exact promoted engine, verified the pinned 109&nbsp;GB GGUF snapshot, ran its public harness three times, and recorded the entire box every five seconds.</p>
+          <p class="lede">The result is interesting for a reason bigger than one score: this is a purpose-built inference engine that keeps the useful weights resident, reads a giant lookup table from NVMe, and uses Qwen's own MTP head to finish more than one token per expensive model step.</p>
+          <div class="facts">
+            <div class="fact"><div class="k">official record</div><div class="v">108.5% <span class="u">composite increase</span></div></div>
+            <div class="fact"><div class="k">my decode mean</div><div class="v">32.84 <span class="u">tok/s</span></div></div>
+            <div class="fact"><div class="k">MTP acceptance</div><div class="v">90.91%</div></div>
+            <div class="fact"><div class="k">SSD-resident table</div><div class="v">26.82 <span class="u">GiB</span></div></div>
+            <div class="fact"><div class="k">correctness</div><div class="v">3 / 3 <span class="u">passed</span></div></div>
+          </div>
+        </header>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the verdict</p></div>
+          <div class="verdict">
+            <div class="verdict-copy">
+              <p><b>The number is real inside the benchmark, but the sentence is easy to overread.</b> The official result is paired against a serial control on the same Spark, in the same job, with two control/candidate pairs and a calibrated health band. That is stronger than comparing against an old number from another machine.</p>
+              <p>What it does <em>not</em> mean is twice the speed for every prompt, context length, concurrency level, or serving stack. It is a decode-heavy composite for one single-stream benchmark shape.</p>
+            </div>
+            <div class="verdict-stamp"><strong>credible, narrowly scoped</strong><span>Not inflated; insufficiently qualified if the score formula is omitted.</span></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">what is actually different</p></div>
+          <p class="note">This is not vLLM with another launch flag, and it is not a general OpenAI-compatible server. The measured path is a compact engine and benchmark adapter built around this model and this GB10.</p>
+          <div class="pipeline" aria-label="cuda.fast inference pipeline">
+            <div class="pipe"><b>1 · GGUF shards</b><span>Unsloth UD-Q4_K_XL, checked byte-for-byte before launch.</span></div>
+            <div class="pipe"><b>2 · split residency</b><span>76.87 GiB stays resident; the 26.82 GiB PLE table is read directly from NVMe.</span></div>
+            <div class="pipe"><b>3 · ds4 on GB10</b><span>Custom CUDA kernels for Qwen's GDN, sparse attention, routing and quantized experts.</span></div>
+            <div class="pipe"><b>4 · native MTP head</b><span>A 2.60 GiB Q8 head proposes the next token while the target model verifies it.</span></div>
+            <div class="pipe"><b>5 · resident protocol</b><span>One model load serves every harness phase through a local socket.</span></div>
+          </div>
+          <p class="note">The promoted commit adds a GDN kernel that reuses one query/key vector and gate pair across four value rows. That saves repeated memory work without changing the ordered arithmetic for each row. The larger win is cumulative: model-specific kernels, SSD-aware layout, one-load residency, and speculative decode all compound.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">my three runs</p></div>
+          <p class="note">The public harness uses a 1,024-token long-copy prompt, greedy single-stream generation, MTP depth 1, a five-second timed window, and a cool gate before each timing phase. The official private prompt and serial control were not available locally, so these runs correctly sealed <code>score: null</code>.</p>
+          <div class="duo">
+            <div class="chart-panel"><h3>prefill · tok/s</h3><div id="ch-run-prefill"></div></div>
+            <div class="chart-panel"><h3>decode · tok/s</h3><div id="ch-run-decode"></div></div>
+          </div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table">
+              <thead><tr><th>run</th><th>prefill</th><th>decode</th><th>MTP accepted</th><th>checked steps</th><th>replay disagreements</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>953.12 tok/s</td><td>32.50 tok/s</td><td>60 / 66</td><td>130</td><td>0</td></tr>
+                <tr><td>2</td><td>1,221.77 tok/s</td><td>32.42 tok/s</td><td>60 / 66</td><td>130</td><td>0</td></tr>
+                <tr><td>3</td><td>1,222.74 tok/s</td><td>33.60 tok/s</td><td>60 / 66</td><td>130</td><td>0</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="fine">Decode varied by 2.01% sample CV. Prefill varied by 13.72% because the first pass was slower; the two subsequent passes were within 0.08%. All three passed the public correctness gate.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the 108.5% claim</p></div>
+          <div class="formula">
+            <code>composite = prefill gain<sup>0.25</sup> × decode gain<sup>0.75</sup></code>
+            <p>The leaderboard reports <code>(composite − 1) × 100%</code>. “108.5% faster” therefore means a 2.085× weighted composite—not that both raw throughput numbers individually doubled.</p>
+          </div>
+          <div class="chart-panel"><h3>official record progression · composite increase</h3><div id="ch-record"></div></div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table audit">
+              <thead><tr><th>claim</th><th>what the evidence says</th><th>verdict</th></tr></thead>
+              <tbody>
+                <tr><td>“108.5% faster”</td><td>Correct for the current official single-stream composite versus its paired serial control.</td><td><span class="tag good">supported</span></td></tr>
+                <tr><td>“more than twice as fast”</td><td>Correct only when “speed” means the weighted composite. Decode carries 75% of the score.</td><td><span class="tag context">needs context</span></td></tr>
+                <tr><td>same output</td><td>The target model verifies proposals, but the official token gate permits up to 10% trajectory divergence. It is not a bit-identical-output claim.</td><td><span class="tag context">needs context</span></td></tr>
+                <tr><td>general serving win</td><td>Not established: the ranked shape is one stream, one 1K prompt, 128 checked decode steps, and no HTTP serving layer.</td><td><span class="tag context">not measured</span></td></tr>
+                <tr><td>works on a Spark</td><td>Yes. My independent build loaded, ran, passed correctness three times, and returned to idle cleanly.</td><td><span class="tag good">confirmed</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">The earlier 105.5% post was accurate when published. The board moved again within hours: the same promoted commit now holds 108.5%, with 1,232.2 prefill tok/s and 29.6 decode tok/s on the official private timing shape.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">absolute speed in context</p></div>
+          <p class="note">cuda.fast was 6.1× faster than my earlier llama.cpp GGUF decode result. The vLLM and SGLang rows used NVFP4 and a 256K deployment sweep, while cuda.fast used its 1K public harness. This chart is orientation, not a controlled engine ranking.</p>
+          <div class="duo">
+            <div class="chart-panel"><h3>decode · tok/s <span class="fine">different benchmark shapes</span></h3><div id="ch-compare-decode"></div></div>
+            <div class="chart-panel"><h3>prefill · tok/s <span class="fine">different benchmark shapes</span></h3><div id="ch-compare-prefill"></div></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">memory trick</p></div>
+          <p class="note">The model body is 103.69 GiB before the draft head and working memory. The engine avoids an impossible all-resident allocation by treating the huge per-layer n-gram embedding table as a sparse lookup file.</p>
+          <div class="chart-panel"><h3>launch memory plan · GiB</h3><div id="ch-memory"></div></div>
+          <p class="fine">The launch gate required 93.46 GiB against 116.08–116.22 GiB available. The PLE segment is shown separately because it remains on SSD rather than consuming the resident allocation.</p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">thermals &amp; device behavior</p></div>
+          <p class="note">Five-second on-device sampling covered setup, all three runs and final cooldown. The plots below show the 101 samples in the benchmark phases. Gaps mark a new resident-engine window.</p>
+          <div class="chart-panel"><h3>temperature · °c <span class="leg"><span class="sw" style="background:var(--gpu)"></span>GPU</span><span class="leg"><span class="sw" style="background:var(--memory)"></span>NVMe max</span></h3><div id="ch-temp"></div></div>
+          <div class="chart-panel"><h3>gpu power · w <span class="leg"><span class="sw" style="background:var(--power)"></span>board draw</span></h3><div id="ch-power"></div></div>
+          <div class="chart-panel"><h3>available system memory · GiB <span class="leg"><span class="sw" style="background:var(--memory)"></span>available</span></h3><div id="ch-avail"></div></div>
+          <div class="chart-panel table-wrap" style="padding-bottom:.9rem">
+            <table class="data-table">
+              <thead><tr><th>samples</th><th>GPU peak</th><th>power peak</th><th>GPU util peak</th><th>NVMe peak</th><th>memory floor</th><th>loaded limiter samples</th></tr></thead>
+              <tbody><tr><td>707 total · 101 benchmark</td><td>56°C</td><td>60.35 W</td><td>96%</td><td>49.85°C</td><td>31.91 GiB</td><td>0</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">what I would—and would not—repeat</p></div>
+          <ul class="findings">
+            <li><b>The engineering is substantive.</b> The SSD split is model-aware, the resident process removes repeated 100&nbsp;GB loads, and MTP converts a 90.9% accepted draft stream into fewer expensive target-model rounds.</li>
+            <li><b>The official comparison is well controlled.</b> The serial denominator is measured beside the candidate, not copied from an old blog post. Calibration is a health check, not the denominator.</li>
+            <li><b>The headline needs its noun.</b> “108.5% faster single-stream composite” is precise. “The model is 108.5% faster” invites a broader interpretation than the benchmark supports.</li>
+            <li><b>My run validates the engine, not the leaderboard score.</b> The local harness intentionally cannot seal an official score without the organizer's reference tree, calibration and private golden.</li>
+            <li><b>It is not yet a drop-in server benchmark.</b> There is no concurrency sweep, 256K context test, HTTP scheduling measurement or long-running production soak in this result.</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">method &amp; sources</p></div>
+          <p class="note">Machine: one NVIDIA DGX Spark, GB10, 128&nbsp;GB unified memory, CUDA 13.0, driver 580.173.02. Candidate repository <code>fb49cb2</code>; pinned ds4 engine <code>5f36517</code>; benchd source <code>206b71b</code>. The model and harness hashes matched across all three runs. Seventy-nine adapter tests also passed.</p>
+          <p class="note">Sources: <a href="https://www.yukon.org/mlxfast?platform=cuda">official cuda.fast leaderboard and scoring description</a> · <a href="https://github.com/Layr-Labs/cudafast-qwen38-125b-a6b-engine">public engine, contract and harness</a> · <a href="https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF">Unsloth GGUF checkpoint</a> · <a href="qwen38-flash-next-dgx-spark.html">my earlier vLLM, SGLang and llama.cpp comparison</a>.</p>
+        </section>
+      </div>
+    </main>
+    <footer class="site-footer"><div class="site-footer__inner"><span>© 2026 Sagar Pandita</span></div></footer>
+    <div class="tip" id="tip" role="tooltip"></div>
+    <script src="cudafast-qwen38-data.js"></script>
+    <script>
+      const DATA=window.CUDAFAST_QWEN38_DATA,NS='http://www.w3.org/2000/svg',tip=document.getElementById('tip');
+      const COLORS=['var(--cuda)','var(--mtp)','var(--ssd)','var(--serial)'];
+      function svgEl(w,h,minw=320){const s=document.createElementNS(NS,'svg');s.setAttribute('viewBox',`0 0 ${w} ${h}`);s.setAttribute('width','100%');s.style.minWidth=minw+'px';return s}
+      function showTip(ev,html){tip.style.display='block';tip.style.left=Math.min(ev.clientX+14,innerWidth-285)+'px';tip.style.top=Math.min(ev.clientY+14,innerHeight-125)+'px';tip.innerHTML=html}
+      function hideTip(){tip.style.display='none'}
+      function barChart(id,rows,key,maxOverride){const mount=document.getElementById(id),W=470,H=240,PL=54,PR=14,PT=18,PB=48,iw=W-PL-PR,ih=H-PT-PB,max=maxOverride||Math.max(...rows.map(d=>d[key]))*1.12,s=svgEl(W,H,350);let g='';for(let i=0;i<=4;i++){const v=max*i/4,y=PT+ih-i/4*ih;g+=`<line x1="${PL}" x2="${W-PR}" y1="${y}" y2="${y}" stroke="var(--grid)"/><text x="${PL-7}" y="${y+4}" text-anchor="end">${v>=100?Math.round(v):v.toFixed(1)}</text>`}const step=iw/rows.length,bw=Math.min(66,step*.58);rows.forEach((d,i)=>{const x=PL+i*step+(step-bw)/2,y=PT+ih-d[key]/max*ih,label=d.name||`run ${d.run}`,color=COLORS[i%COLORS.length];g+=`<rect data-i="${i}" x="${x}" y="${y}" width="${bw}" height="${PT+ih-y}" rx="3" fill="${color}"/><text x="${x+bw/2}" y="${H-26}" text-anchor="middle">${label.replace(' · ',' ·\n')}</text><text x="${x+bw/2}" y="${Math.max(13,y-6)}" text-anchor="middle">${d[key]}</text>`});g+=`<rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;mount.appendChild(s);s.addEventListener('mousemove',ev=>{const rect=ev.target.closest('rect[data-i]');if(!rect)return hideTip();const d=rows[+rect.dataset.i],scope=d.scope?`<br>${d.scope}`:'';showTip(ev,`<b>${d.name||`run ${d.run}`}</b><br>${key} ${d[key].toLocaleString()} tok/s${scope}`)});s.addEventListener('mouseleave',hideTip)}
+      function recordChart(){const rows=DATA.record_history,mount=document.getElementById('ch-record'),W=940,H=275,PL=52,PR=18,PT=18,PB=45,iw=W-PL-PR,ih=H-PT-PB,max=120,x=i=>PL+i/(rows.length-1)*iw,y=v=>PT+ih-v/max*ih,s=svgEl(W,H,620);let g='';for(let v=0;v<=120;v+=30)g+=`<line x1="${PL}" x2="${W-PR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${PL-7}" y="${y(v)+4}" text-anchor="end">${v}%</text>`;let p='';rows.forEach((d,i)=>p+=(p?'L':'M')+x(i)+' '+y(d.increase));g+=`<path d="${p}" fill="none" stroke="var(--cuda)" stroke-width="2.5"/>`;rows.forEach((d,i)=>{g+=`<circle data-i="${i}" cx="${x(i)}" cy="${y(d.increase)}" r="4.5" fill="var(--cuda)" stroke="var(--panel)" stroke-width="2"/><text x="${x(i)}" y="${H-24}" text-anchor="middle">${d.time.split(' · ')[1]}</text>`});g+=`<text x="${PL}" y="${H-7}">Sep 10</text><text x="${W-PR}" y="${H-7}" text-anchor="end">Sep 12 · UTC</text><rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="none" stroke="var(--rule)"/>`;s.innerHTML=g;mount.appendChild(s);s.addEventListener('mousemove',ev=>{const dot=ev.target.closest('circle[data-i]');if(!dot)return hideTip();const d=rows[+dot.dataset.i];showTip(ev,`<b>${d.time} UTC</b><br>${d.increase}% composite increase<br>${d.decode} decode · ${d.prefill} prefill tok/s`)});s.addEventListener('mouseleave',hideTip)}
+      function memoryChart(){const rows=DATA.memory,mount=document.getElementById('ch-memory'),W=940,H=190,PL=20,PR=20,PT=45,barY=65,barH=38,total=rows.reduce((a,d)=>a+d.gib,0),iw=W-PL-PR,s=svgEl(W,H,620);let x=PL,g='';rows.forEach((d,i)=>{const w=d.gib/total*iw,color=i===4?'var(--ssd)':i===1?'var(--mtp)':'var(--cuda)';g+=`<rect data-i="${i}" x="${x}" y="${barY}" width="${w}" height="${barH}" fill="${color}" opacity="${i===4?.78:1}"/><text x="${x+w/2}" y="${barY+barH+18}" text-anchor="middle">${d.gib.toFixed(2)}</text>`;x+=w});g+=`<text x="${PL}" y="25">resident allocation and safety budget</text><text x="${W-PR}" y="25" text-anchor="end">PLE stays on SSD</text>`;s.innerHTML=g;mount.appendChild(s);s.addEventListener('mousemove',ev=>{const bar=ev.target.closest('rect[data-i]');if(!bar)return hideTip();const d=rows[+bar.dataset.i];showTip(ev,`<b>${d.name}</b><br>${d.gib.toFixed(2)} GiB`)});s.addEventListener('mouseleave',hideTip)}
+      function telemetryChart(id,keys,colors,unit){const rows=DATA.telemetry,mount=document.getElementById(id),W=940,H=245,PL=50,PR=18,PT=18,PB=32,iw=W-PL-PR,ih=H-PT-PB,max=Math.max(...rows.flatMap(d=>keys.map(k=>d[k]||0)))*1.1,min=0,x=t=>PL+t/rows.at(-1).t*iw,y=v=>PT+ih-(v-min)/(max-min)*ih,s=svgEl(W,H,620);let g='';for(let i=0;i<=4;i++){const v=max*i/4,yy=y(v);g+=`<line x1="${PL}" x2="${W-PR}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/><text x="${PL-7}" y="${yy+4}" text-anchor="end">${Math.round(v)}</text>`}keys.forEach((key,ki)=>{let p='',segments=[];rows.forEach((d,i)=>{if(d.gap&&p){segments.push(p);p=''}p+=(p?'L':'M')+x(d.t).toFixed(1)+' '+y(d[key]).toFixed(1);if(i===rows.length-1&&p)segments.push(p)});for(const segment of segments)g+=`<path d="${segment}" fill="none" stroke="${colors[ki]}" stroke-width="2"/>`});for(const d of rows)if(d.gap)g+=`<line x1="${x(d.t)}" x2="${x(d.t)}" y1="${PT}" y2="${PT+ih}" stroke="var(--rule)" stroke-dasharray="4 4"/>`;g+=`<rect x="${PL}" y="${PT}" width="${iw}" height="${ih}" fill="transparent" stroke="var(--rule)" data-hit="1"/>`;s.innerHTML=g;mount.appendChild(s);s.addEventListener('mousemove',ev=>{const r=s.getBoundingClientRect(),px=(ev.clientX-r.left)/r.width*W,t=(px-PL)/iw*rows.at(-1).t;let d=rows.reduce((a,b)=>Math.abs(b.t-t)<Math.abs(a.t-t)?b:a);showTip(ev,`<b>${d.phase} · ${Math.round(d.t)}s</b><br>${keys.map(k=>`${k.replaceAll('_',' ')} ${d[k]}${unit}`).join('<br>')}`)});s.addEventListener('mouseleave',hideTip)}
+      barChart('ch-run-prefill',DATA.runs,'prefill');barChart('ch-run-decode',DATA.runs,'decode',38);
+      barChart('ch-compare-decode',DATA.comparison,'decode',48);barChart('ch-compare-prefill',DATA.comparison,'prefill',2400);
+      recordChart();memoryChart();
+      telemetryChart('ch-temp',['gpu_temp','nvme_temp'],['var(--gpu)','var(--memory)'],'°C');
+      telemetryChart('ch-power',['gpu_power'],['var(--power)'],' W');
+      telemetryChart('ch-avail',['memory_available'],['var(--memory)'],' GiB');
+    </script>
+  </body>
+</html>
