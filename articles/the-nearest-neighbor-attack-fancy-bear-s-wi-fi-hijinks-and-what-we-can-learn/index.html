@@ -12,24 +12,42 @@
     <meta property="og:description" content="Let’s set the scene: You’re cozied up in your home office, casually scrolling through the latest security research, when you stumble upon something so audacious it makes your cof…" />
     <meta property="article:published_time" content="2024-12-23T01:05:22.000Z" />
     <link rel="canonical" href="https://sagarpandita.com/articles/the-nearest-neighbor-attack-fancy-bear-s-wi-fi-hijinks-and-what-we-can-learn/" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="../../styles.css?v=medium-exit-2" />
+    <style>
+      html { overflow-x: hidden; }
+      .article-site-header { display: flex; justify-content: space-between; gap: 1rem; }
+      .article-site-header a { display: inline-block; }
+      .article-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      main.article-page { width: 100%; max-width: 760px; margin-inline: auto; padding-inline: 1.5rem; }
+      .article-header h1, .article-body, .next-article a { overflow-wrap: anywhere; }
+      .article-footer-inner { display: flex; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; }
+    </style>
   </head>
   <body>
     <a class="skip-link" href="#article-content">Skip to article</a>
-    <header class="article-site-header"><a href="/" aria-label="Sagar Pandita home">← Sagar Pandita</a><a href="/#writing">All writing</a></header>
+    <header class="article-site-header">
+      <a href="../../" aria-label="Sagar Pandita home">← Sagar Pandita</a>
+      <a href="../../#writing">All writing</a>
+    </header>
     <main class="article-page" id="article-content">
       <header class="article-header">
-        <div class="article-tags"><span>cybersecurity</span><span>cyber-security-awareness</span><span>security</span></div>
+        <div class="article-tags"><span>cybersecurity</span>
+          <span>cyber-security-awareness</span>
+          <span>security</span></div>
         <h1>The Nearest Neighbor Attack: Fancy Bear’s Wi-Fi Hijinks and What We Can Learn</h1>
-        <p class="article-deck">Let’s set the scene: You’re cozied up in your home office, casually scrolling through the latest security research, when you stumble upon something so audacious it makes your cof…</p>
         <p class="article-byline">Sagar Pandita <span>·</span> December 23, 2024 <span>·</span> 4 min read</p>
       </header>
       <article class="article-body"><p><strong>Let’s set the scene:</strong> You’re cozied up in your home office, casually scrolling through the latest security research, when you stumble upon something so audacious it makes your coffee go cold.</p><p>It’s a story about how Fancy Bear — yes, <em>that</em> Fancy Bear, a.k.a. APT28, a.k.a. GruesomeLarch — hacked into an enterprise Wi-Fi network not directly, but by hopping through a neighbor’s Wi-Fi like some kind of cyber ninja.</p><p>Curious? So was I. This fascinating caper, uncovered by Volexity, reads like a spy novel for the tech world. Let me walk you through it.</p><h3>The Setup: Wi-Fi Hopping with Style</h3><p>The attack starts like a classic thriller: bad guys want in. The target? A company with projects linked to Ukraine. But this wasn’t your typical phishing scam or brute force break-in.</p><p>Instead, Fancy Bear decided to do a little neighborly borrowing. Using a clever technique now dubbed the <strong>Nearest Neighbor Attack</strong>, they bypassed MFA restrictions and jumped networks in a way that’s as brilliant as it is terrifying.</p><p>Here’s what they did:</p><ol><li><strong>Snagged Some Credentials:</strong> First, they ran password-spray attacks on the target company (let’s call them Organization A) to collect usernames and passwords. While MFA stopped them from accessing most systems, the enterprise Wi-Fi didn’t have MFA. Bingo.</li><li><strong>Pivoted Through a Neighbor:</strong> When they couldn’t connect directly to Organization A’s Wi-Fi, they compromised another company (Organization B) next door. There, they found a “dual-homed” system — one with wired and wireless connections.</li><li><strong>The Final Leap:</strong> Using Organization B’s dual-homed setup, they authenticated to Organization A’s Wi-Fi network. They didn’t just find a loophole — they exploited the whole neighborhood.</li></ol><p>And it didn’t stop there. They leveraged a third company’s network (Organization C) to complete the chain, proving that proximity is indeed a vulnerability.</p><h3>What Makes This Attack So Genius?</h3><p>Fancy Bear didn’t just exploit technical weaknesses; they turned physical proximity into a weapon.</p><p>Imagine this: Your office Wi-Fi requires only a username and password. You’re confident that no one outside the building can connect. But what if someone across the street has a compromised device that bridges into your network? That’s exactly what happened here.</p><p>And the attackers were <em>good</em> at covering their tracks:</p><ul><li>They used <strong>Cipher.exe</strong>, a legitimate Windows tool, to securely delete files.</li><li>They dumped Active Directory databases via shadow copies and staged data for exfiltration in public directories, blending into normal traffic.</li><li>When investigators got close, they wiped systems clean, leaving little evidence behind.</li></ul><p>It’s like a digital game of hide-and-seek, and Fancy Bear had years of practice.</p><h3>Cracking the Case</h3><p>What’s incredible about Volexity’s research is how they pieced everything together. Initially, investigators assumed the attackers might be lurking in a car or building nearby. But Wi-Fi logs told a different story.</p><p>By analyzing MAC addresses and NetBIOS queries, they traced the attack to neighboring organizations. Organization B’s dual-homed device acted as a bridge, connecting the attacker to Organization A’s Wi-Fi.</p><p>It was like watching a cyber spy thriller unfold in real-time.</p><h3>Lessons for All of Us</h3><p>While this attack targeted specific organizations, the lessons are universal. Here’s what we can learn:</p><ol><li><strong>Enable MFA Everywhere:</strong> Wi-Fi included. Yes, even your Wi-Fi deserves multi-factor authentication love.</li><li><strong>Check for Dual-Homed Devices:</strong> These systems are convenient, but they can also be a gateway for attackers.</li><li><strong>Log, Log, Log:</strong> Without detailed wireless controller logs, tracking this attack would’ve been nearly impossible.</li><li><strong>Think Beyond Your Walls:</strong> Your security isn’t just about your network — it’s about your neighbors, too.</li></ol><h3>Final Thoughts</h3><p>The Nearest Neighbor Attack is a masterclass in creativity, showing how determined attackers can exploit the tiniest weaknesses. It’s a reminder to think holistically about security.</p><p>So next time you set up a Wi-Fi network, take a moment to imagine what Fancy Bear might do. And then, do everything you can to make their lives miserable.</p><p>Stay safe out there!</p><p><em>Inspired by Volexity’s incredible work. Full credit to their researchers for uncovering this ingenious attack. You can find their detailed write-up below.</em></p><p><a href="https://www.volexity.com/blog/2024/11/22/the-nearest-neighbor-attack-how-a-russian-apt-weaponized-nearby-wi-fi-networks-for-covert-access/">The Nearest Neighbor Attack: How A Russian APT Weaponized Nearby Wi-Fi Networks for Covert Access</a></p></article>
       <nav class="next-article" aria-label="Next article">
         <small>Continue reading</small>
-        <a href="/articles/yubikeys-vulnerable-to-cloning-attacks-but-should-you-worry/">YubiKeys Vulnerable to Cloning Attacks — But Should You Worry? →</a>
+        <a href="../yubikeys-vulnerable-to-cloning-attacks-but-should-you-worry/">YubiKeys Vulnerable to Cloning Attacks — But Should You Worry? →</a>
       </nav>
     </main>
-    <footer class="site-footer"><div class="site-footer__inner"><span>© 2026 Sagar Pandita</span><a href="/#writing">Back to writing</a></div></footer>
+    <footer class="site-footer">
+      <div class="site-footer__inner article-footer-inner">
+        <span>© 2026 Sagar Pandita</span>
+        <a href="../../#writing">Back to writing</a>
+      </div>
+    </footer>
   </body>
 </html>
