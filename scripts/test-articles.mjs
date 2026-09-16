@@ -24,6 +24,7 @@ for (const article of articles) {
   check(page.includes('class="article-site-header"'), `${article.slug}: header is missing`);
   check(page.includes('class="article-tags"'), `${article.slug}: tags are missing`);
   check(page.includes('class="article-body"'), `${article.slug}: body is missing`);
+  check(page.includes('src="../../scripts/article-companion.js" defer'), `${article.slug}: focus companion is missing`);
   check(!page.includes('class="article-deck"'), `${article.slug}: duplicates the opening paragraph in the header`);
   check(page.includes('class="next-article"'), `${article.slug}: next navigation is missing`);
   check(page.includes('article-footer-inner'), `${article.slug}: footer layout hook is missing`);

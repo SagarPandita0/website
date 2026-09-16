@@ -65,6 +65,7 @@ for (const [index, article] of articles.entries()) {
         <a href="../../#writing">Back to writing</a>
       </div>
     </footer>
+    <script src="../../scripts/article-companion.js" defer></script>
   </body>
 </html>\n`);
 }
