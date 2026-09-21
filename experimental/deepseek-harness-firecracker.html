@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSeek Harness in Firecracker on DGX Spark · Sagar Pandita</title>
+    <meta
+      name="description"
+      content="Running DeepSeek Harness inside an ARM64 Firecracker microVM on NVIDIA DGX Spark, with an offline guest, staged dependencies, and tightly controlled API egress."
+    />
+    <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://sagarpandita.com/experimental/deepseek-harness-firecracker.html" />
+    <meta property="og:title" content="DeepSeek Harness in Firecracker on DGX Spark" />
+    <meta
+      property="og:description"
+      content="An experiment in giving an autonomous agent a much shorter leash: Firecracker/KVM isolation, an offline Ubuntu guest, and allowlisted model egress on DGX Spark."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230b0d10'/%3E%3Cpath%20d='M9%2011l5%205-5%205'%20fill='none'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M17%2021h6'%20stroke='%235ccfe6'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      :root {
+        --ok: #1b9b6c;
+        --bad: #c55748;
+        --warn: #b47a00;
+        --code-bg: #11151b;
+        --code-ink: #e7ebf0;
+        --code-muted: #8f9aaa;
+        --flow-bg: rgba(20, 23, 28, 0.035);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ok: #41c78f;
+          --bad: #ef7d70;
+          --warn: #e0a63d;
+          --code-bg: #05070a;
+          --code-ink: #e4e8f0;
+          --code-muted: #8e98a7;
+          --flow-bg: rgba(228, 232, 240, 0.045);
+        }
+      }
+
+      .back-link {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        text-decoration: none;
+      }
+
+      .back-link:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      .lab-hero h1 {
+        margin: 0.2rem 0 0.9rem;
+        font-size: clamp(1.7rem, 4.5vw, 2.3rem);
+      }
+
+      .lede {
+        color: var(--muted);
+        max-width: 68ch;
+        margin: 0;
+      }
+
+      .lede + .lede {
+        margin-top: 0.8rem;
+      }
+
+      .lede code,
+      .section code {
+        font-family: var(--font-mono);
+        font-size: 0.85em;
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+        gap: 0.6rem;
+        margin: 1.6rem 0 0;
+      }
+
+      .fact {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 0.65rem 0.85rem;
+      }
+
+      .fact .k {
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        color: var(--muted);
+        margin-bottom: 0.3rem;
+      }
+
+      .fact .k::before {
+        content: '> ';
+        color: var(--prompt);
+      }
+
+      .fact .v {
+        font-family: var(--font-mono);
+        font-size: 1.05rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.25;
+      }
+
+      .fact .u {
+        font-size: 0.75rem;
+        font-weight: 400;
+        color: var(--muted);
+      }
+
+      .note {
+        color: var(--muted);
+        max-width: 72ch;
+        margin: 0 0 1rem;
+        font-size: 0.95rem;
+      }
+
+      .note strong {
+        color: var(--ink);
+      }
+
+      .findings {
+        margin: 0.5rem 0 0;
+        padding: 0 0 0 1.2em;
+        max-width: 72ch;
+      }
+
+      .findings li {
+        margin-bottom: 0.6rem;
+        color: var(--muted);
+      }
+
+      .findings b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .terminal {
+        position: relative;
+        margin: 0.85rem 0 1.1rem;
+        border-radius: 7px;
+        overflow: hidden;
+        border: 1px solid rgba(127, 137, 150, 0.18);
+        background: var(--code-bg);
+      }
+
+      .terminal::before {
+        content: 'terminal';
+        display: block;
+        padding: 0.42rem 0.7rem;
+        border-bottom: 1px solid rgba(127, 137, 150, 0.18);
+        color: var(--code-muted);
+        font-family: var(--font-mono);
+        font-size: 0.64rem;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+      }
+
+      .terminal pre {
+        margin: 0;
+        padding: 0.85rem 0.95rem;
+        overflow-x: auto;
+        color: var(--code-ink);
+        font-family: var(--font-mono);
+        font-size: 0.76rem;
+        line-height: 1.6;
+        white-space: pre;
+      }
+
+      .terminal .dim {
+        color: var(--code-muted);
+      }
+
+      .flow {
+        margin: 0.9rem 0 1.2rem;
+        padding: 1rem;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        background: var(--flow-bg);
+        overflow-x: auto;
+      }
+
+      .flow pre {
+        margin: 0;
+        font-family: var(--font-mono);
+        font-size: 0.76rem;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .flow b {
+        color: var(--ink);
+      }
+
+      .status {
+        display: inline-block;
+        padding: 0.06rem 0.42rem;
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        font-weight: 600;
+      }
+
+      .status.ok {
+        color: var(--ok);
+        background: color-mix(in srgb, var(--ok) 12%, transparent);
+      }
+
+      .status.bad {
+        color: var(--bad);
+        background: color-mix(in srgb, var(--bad) 12%, transparent);
+      }
+
+      .status.warn {
+        color: var(--warn);
+        background: color-mix(in srgb, var(--warn) 12%, transparent);
+      }
+
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-variant-numeric: tabular-nums;
+        font-size: 0.82rem;
+      }
+
+      .data-table th {
+        text-align: left;
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        color: var(--muted);
+        padding: 0.45rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .data-table td {
+        padding: 0.48rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+        color: var(--muted);
+        vertical-align: top;
+      }
+
+      .data-table td:first-child {
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: 0.77rem;
+      }
+
+      .data-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .table-panel {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        overflow-x: auto;
+        margin: 0.8rem 0 1rem;
+      }
+
+      .callout {
+        border-left: 3px solid var(--prompt);
+        padding: 0.2rem 0 0.2rem 0.9rem;
+        margin: 1rem 0 1.2rem;
+        max-width: 72ch;
+      }
+
+      .callout p {
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .refs {
+        display: grid;
+        gap: 0.55rem;
+        max-width: 72ch;
+      }
+
+      .refs a {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <main id="content">
+      <div class="page-shell">
+        <header class="hero lab-hero">
+          <p class="eyebrow">
+            <a class="back-link" href="../"><span class="prompt" aria-hidden="true">$</span>cd ~/sagarpandita.com</a>
+          </p>
+          <p class="eyebrow"><span class="prompt" aria-hidden="true">$</span>experimental / september 2026</p>
+
+          <h1>DeepSeek Harness in Firecracker on DGX Spark</h1>
+
+          <p class="lede">
+            DeepSeek Harness is exactly the kind of software I want to experiment with and exactly
+            the kind of software I do not want directly running around my homelab host. It can ask
+            a model for actions, execute shell commands, touch files, and generally behave like an
+            agent rather than a chat client.
+          </p>
+
+          <p class="lede">
+            So I put the whole thing inside an ARM64 Firecracker microVM on my NVIDIA DGX Spark.
+            The guest had no default Internet route, dependencies were staged from the host, and
+            the only external egress I eventually allowed was the DeepSeek API through a host-side
+            proxy.
+          </p>
+
+          <div class="facts">
+            <div class="fact"><div class="k">host</div><div class="v">DGX Spark</div></div>
+            <div class="fact"><div class="k">architecture</div><div class="v">aarch64</div></div>
+            <div class="fact"><div class="k">firecracker</div><div class="v">1.17.0</div></div>
+            <div class="fact"><div class="k">guest</div><div class="v">Ubuntu 24.04</div></div>
+            <div class="fact"><div class="k">guest disk</div><div class="v">50 <span class="u">GB sparse</span></div></div>
+            <div class="fact"><div class="k">package payload</div><div class="v">1317 <span class="u">offline</span></div></div>
+          </div>
+        </header>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the punchline</p></div>
+
+          <p class="note">
+            <strong>Firecracker is a very natural outer boundary for an autonomous agent.</strong>
+            I did not try to teach DeepSeek Harness how to create Firecracker guests. I ran the
+            entire Harness inside one. The model-facing application, its shell tools, its package
+            lifecycle scripts, and whatever target workspace I give it all live on the disposable
+            side of the KVM boundary.
+          </p>
+
+          <div class="flow">
+<pre><b>Mac mini</b>
+   │
+   │  Tailscale / SSH
+   ▼
+<b>DGX Spark</b>
+   │
+   ├── Firecracker + KVM
+   ├── tap0 · 192.0.2.1
+   ├── Squid · DeepSeek API allowlist
+   │
+   └── <b>Firecracker guest · 192.0.2.2</b>
+          ├── Ubuntu 24.04 ARM64
+          ├── Node 24
+          ├── DeepSeek Harness
+          ├── target workspace
+          └── no default Internet route</pre>
+          </div>
+
+          <p class="note">
+            The built-in Harness sandbox is still useful, but I wanted a stronger failure boundary
+            around the whole process. If an agent manages to surprise me, I would much rather the
+            surprise end at a microVM disk image than at the Spark host.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">does firecracker run on spark?</p></div>
+
+          <p class="note">
+            DGX Spark is ARM64. Firecracker supports <code>aarch64</code>, but the more important
+            prerequisite is working KVM access:
+          </p>
+
+          <div class="terminal">
+<pre>$ uname -m
+aarch64
+
+$ ls -l /dev/kvm
+crw-rw----+ 1 root kvm 10, 232 /dev/kvm
+
+$ [ -r /dev/kvm ] &amp;&amp; [ -w /dev/kvm ] &amp;&amp; echo "KVM READY"
+KVM READY</pre>
+          </div>
+
+          <p class="note">
+            With that green light, the native ARM64 Firecracker binary worked immediately:
+          </p>
+
+          <div class="terminal">
+<pre>$ ./firecracker --version
+Firecracker v1.17.0</pre>
+          </div>
+
+          <p class="note">
+            No emulation layer, no nested VM trickery — just Firecracker on the Spark's own KVM.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">building the guest</p></div>
+
+          <p class="note">
+            I used Firecracker's ARM64 CI artifacts: an Ubuntu 24.04 SquashFS and a
+            <code>vmlinux-6.18.48</code> kernel. The root filesystem was unpacked, an SSH key was
+            injected, and the result was written into an ext4 image.
+          </p>
+
+          <div class="terminal">
+<pre>$ unsquashfs ubuntu-24.04.squashfs.upstream
+
+$ truncate -s 8G ubuntu-24.04.ext4
+
+$ sudo mkfs.ext4 \
+    -d squashfs-root \
+    -F \
+    ubuntu-24.04.ext4</pre>
+          </div>
+
+          <p class="note">
+            The first image was logically 8 GB but only consumed about 445 MB on disk because it
+            was sparse. Harness's dependency graph made 8 GB feel unnecessarily tight, so I later
+            grew it to 50 GB:
+          </p>
+
+          <div class="terminal">
+<pre>$ truncate -s 50G ubuntu-24.04.ext4
+$ sudo e2fsck -f ubuntu-24.04.ext4
+$ sudo resize2fs ubuntu-24.04.ext4</pre>
+          </div>
+
+          <div class="callout">
+            <p>
+              A 50 GB sparse file does not immediately consume 50 GB of physical storage. It gives
+              the guest room to breathe without preallocating the whole thing on the host.
+            </p>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">boot &amp; network boundary</p></div>
+
+          <p class="note">
+            The VM got 4 vCPUs, 8 GB of RAM, one root disk, and one TAP interface. I used the same
+            simple private point-to-point layout throughout the experiment. The addresses below are
+            documentation-only examples rather than the addresses from my actual network:
+          </p>
+
+          <div class="table-panel">
+            <table class="data-table">
+              <thead>
+                <tr><th>component</th><th>address</th><th>purpose</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>DGX Spark / tap0</td><td>192.0.2.1</td><td>host services, SSH path, later the egress proxy</td></tr>
+                <tr><td>Firecracker guest</td><td>192.0.2.2</td><td>DeepSeek Harness and agent execution</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="note">
+            The boot itself was satisfyingly boring:
+          </p>
+
+          <div class="terminal">
+<pre>Ubuntu 24.04.4 LTS ubuntu-fc-uvm ttyS0
+
+Welcome to Ubuntu 24.04.4 LTS
+(GNU/Linux 6.18.48+ aarch64)
+
+root@ubuntu-fc-uvm:~#</pre>
+          </div>
+
+          <p class="note">
+            Then I intentionally stopped before adding a default route. The guest could reach the
+            Spark:
+          </p>
+
+          <div class="terminal">
+<pre>root@ubuntu-fc-uvm:~# ping -c 3 192.0.2.1
+64 bytes from 192.0.2.1: icmp_seq=1 ttl=64 time=0.349 ms
+64 bytes from 192.0.2.1: icmp_seq=2 ttl=64 time=0.527 ms
+64 bytes from 192.0.2.1: icmp_seq=3 ttl=64 time=0.352 ms</pre>
+          </div>
+
+          <p class="note">
+            But not the Internet:
+          </p>
+
+          <div class="terminal">
+<pre>root@ubuntu-fc-uvm:~# ping -c 3 1.1.1.1
+ping: connect: Network is unreachable
+
+root@ubuntu-fc-uvm:~# curl -I https://github.com
+curl: (6) Could not resolve host: github.com</pre>
+          </div>
+
+          <p class="note">
+            That was not a networking bug. That was the policy.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">installing harness without internet</p></div>
+
+          <p class="note">
+            The interesting problem now became installation. DeepSeek Harness is a large pnpm
+            workspace with native dependencies. Giving the guest temporary unrestricted Internet
+            access would have been easy, but it also would have defeated the point of the setup.
+          </p>
+
+          <p class="note">
+            I used the Spark as a staging machine instead:
+          </p>
+
+          <div class="flow">
+<pre><b>Internet</b>
+   │
+   ▼
+<b>DGX Spark host</b>
+   ├── clone Harness
+   ├── download Node 24 ARM64
+   ├── download pnpm 11.7.0
+   └── hydrate pnpm store
+             │
+             │  SCP / SSH over tap0
+             ▼
+<b>Firecracker guest</b>
+   └── install + build while offline</pre>
+          </div>
+
+          <p class="note">
+            The host fetched the lockfile's package payload into a dedicated store:
+          </p>
+
+          <div class="terminal">
+<pre>$ PNPM_CONFIG_STORE_DIR="$HOME/firecracker/dsh/pnpm-store" \
+    node pnpm.cjs fetch --frozen-lockfile
+
+$ du -sh ~/firecracker/dsh/pnpm-store
+1.8G    $HOME/firecracker/dsh/pnpm-store</pre>
+          </div>
+
+          <p class="note">
+            I copied the source without its giant Git history, then streamed the pnpm store into
+            the guest. Inside Firecracker, the actual install reused the staged packages:
+          </p>
+
+          <div class="terminal">
+<pre>Packages: +1317
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 1317, reused 1312, downloaded 0, added 1317, done</pre>
+          </div>
+
+          <p class="note">
+            <span class="status ok">downloaded 0</span>
+            was the important line. The guest was installing from the content-addressable store,
+            not silently reaching out for package tarballs.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">native builds belong inside the vm</p></div>
+
+          <p class="note">
+            The minimal Firecracker Ubuntu image included Python, but not a compiler toolchain:
+          </p>
+
+          <div class="terminal">
+<pre>root@ubuntu-fc-uvm:~# python3 --version
+Python 3.12.3
+
+root@ubuntu-fc-uvm:~# make --version
+-bash: make: command not found
+
+root@ubuntu-fc-uvm:~# g++ --version
+-bash: g++: command not found</pre>
+          </div>
+
+          <p class="note">
+            Instead of compiling native Node dependencies on the host and copying a finished
+            <code>node_modules</code> tree across, I downloaded the required Ubuntu ARM64
+            <code>.deb</code> files on the Spark and installed them inside the guest.
+          </p>
+
+          <div class="terminal">
+<pre>GNU Make 4.3
+gcc 13.3.0
+g++ 13.3.0
+Python 3.12.3</pre>
+          </div>
+
+          <p class="note">
+            This is a small but important distinction: downloading an archive on the host is very
+            different from allowing dependency lifecycle scripts and native build steps to execute
+            on the host.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">pnpm's definition of offline</p></div>
+
+          <p class="note">
+            This produced my favorite debugging detour. Even after all package payloads were local,
+            pnpm started doing this:
+          </p>
+
+          <div class="terminal">
+<pre>? Verifying lockfile against supply-chain policies (1607 entries)...
+[WARN] GET https://registry.npmjs.org/@anthropic-ai%2Fsdk error (EAI_AGAIN)
+[WARN] GET https://registry.npmjs.org/@aws-sdk%2Fcore error (EAI_AGAIN)
+[WARN] GET https://registry.npmjs.org/@babel%2Fcore error (EAI_AGAIN)</pre>
+          </div>
+
+          <p class="note">
+            The install had already linked the packages. pnpm was performing registry-backed
+            lockfile / supply-chain verification afterward. Because the guest had no default
+            route, the requests simply failed.
+          </p>
+
+          <p class="note">
+            A second surprise: <code>pnpm run build</code> could trigger pnpm's dependency
+            verification before actually running the build script. For this deliberately sealed
+            environment I disabled that pre-run behavior:
+          </p>
+
+          <div class="terminal">
+<pre>pnpm_config_verify_deps_before_run=false \
+pnpm run build</pre>
+          </div>
+
+          <p class="note">
+            That finally got straight to:
+          </p>
+
+          <div class="terminal">
+<pre>$ tsx scripts/build.ts</pre>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">the .git problem</p></div>
+
+          <p class="note">
+            I had intentionally excluded <code>.git</code> from the VM copy. Harness's build,
+            however, wanted the current commit for client build metadata and tried to execute:
+          </p>
+
+          <div class="terminal">
+<pre>git rev-parse HEAD</pre>
+          </div>
+
+          <p class="note">
+            With no Git binary and no repository metadata in the guest, the build failed with
+            <code>spawnSync git ENOENT</code>. The clean fix was to obtain the exact SHA on the
+            Spark and pass it into the guest:
+          </p>
+
+          <div class="terminal">
+<pre>$ git rev-parse HEAD
+ddefc45fbc7f8e46dd73185e68295696d1297887
+
+root@ubuntu-fc-uvm:~/deepseek-harness# \
+export DSH_CLIENT_COMMIT_HASH="ddefc45fbc7f8e46dd73185e68295696d1297887"
+
+root@ubuntu-fc-uvm:~/deepseek-harness# \
+pnpm_config_verify_deps_before_run=false pnpm run build</pre>
+          </div>
+
+          <p class="note">
+            After that, the ARM64 native module built and the TypeScript compilation proceeded
+            normally.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">two hops away from the ui</p></div>
+
+          <p class="note">
+            I was not even sitting at the Spark. I was SSH'd into it from a Mac mini over
+            Tailscale, so reaching the Harness UI involved another layer:
+          </p>
+
+          <div class="flow">
+<pre><b>Mac mini</b>
+Tailscale peer
+    │
+    │ Tailscale
+    ▼
+<b>DGX Spark</b>
+Tailscale peer
+    │
+    │ private Firecracker link
+    ▼
+<b>guest</b>
+192.0.2.2:3080</pre>
+          </div>
+
+          <p class="note">
+            Keeping the UI bound to loopback and forwarding it over SSH meant I never had to
+            expose Harness on the normal LAN interface.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">controlled egress</p></div>
+
+          <p class="note">
+            A completely offline agent cannot call the DeepSeek cloud API, so the last piece was
+            selective egress. I did not want to add a normal default route and hope the agent
+            behaved. Instead, Squid ran on the Spark and listened only on the Firecracker-facing
+            address:
+          </p>
+
+          <div class="terminal">
+<pre>http_port 192.0.2.1:3128
+
+acl firecracker src 192.0.2.2/32
+acl deepseek dstdomain api.deepseek.com
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+
+http_access allow firecracker CONNECT SSL_ports deepseek
+http_access deny all</pre>
+          </div>
+
+          <p class="note">
+            Harness was then launched with proxy variables pointed at the host:
+          </p>
+
+          <div class="terminal">
+<pre>HTTPS_PROXY=http://192.0.2.1:3128 \
+HTTP_PROXY=http://192.0.2.1:3128 \
+NO_PROXY=127.0.0.1,localhost,192.0.2.1,192.0.2.2 \
+NODE_USE_ENV_PROXY=1 \
+pnpm_config_verify_deps_before_run=false \
+pnpm dsh web --no-open</pre>
+          </div>
+
+          <div class="table-panel">
+            <table class="data-table">
+              <thead>
+                <tr><th>destination</th><th>result</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>192.0.2.1</td><td><span class="status ok">reachable</span> host services / proxy</td></tr>
+                <tr><td>api.deepseek.com:443</td><td><span class="status ok">allowed</span> through Squid</td></tr>
+                <tr><td>registry.npmjs.org</td><td><span class="status bad">blocked</span></td></tr>
+                <tr><td>arbitrary Internet</td><td><span class="status bad">blocked</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="note">
+            The best debugging tool at this point was not Harness itself. It was watching the
+            boundary:
+          </p>
+
+          <div class="terminal">
+<pre>$ sudo tail -F /var/log/squid/access.log
+
+$ sudo tcpdump -ni tap0 \
+    'host 192.0.2.2 and (port 53 or port 80 or port 443 or port 3128)'</pre>
+          </div>
+
+          <p class="note">
+            If a model call failed, I could immediately tell whether the VM tried the proxy, tried
+            direct HTTPS, attempted DNS, or never emitted a packet at all.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">what broke along the way</p></div>
+
+          <div class="table-panel">
+            <table class="data-table">
+              <thead>
+                <tr><th>failure</th><th>cause</th><th>fix</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>xz: Cannot exec</code></td>
+                  <td>minimal guest did not include xz</td>
+                  <td>extract Node on the host and copy the directory / plain tar</td>
+                </tr>
+                <tr>
+                  <td><code>npm: Cannot find module ../lib/cli.js</code></td>
+                  <td>npm launcher symlink was wrong after copying Node</td>
+                  <td>recreate npm / npx symlinks into <code>lib/node_modules/npm</code></td>
+                </tr>
+                <tr>
+                  <td>native addons would not build</td>
+                  <td>guest lacked make and g++</td>
+                  <td>stage Ubuntu ARM64 .debs and install them inside the VM</td>
+                </tr>
+                <tr>
+                  <td>pnpm hung on npm registry requests</td>
+                  <td>supply-chain verification still wanted registry metadata</td>
+                  <td>keep the guest offline and disable pre-run verification for the build</td>
+                </tr>
+                <tr>
+                  <td><code>spawnSync git ENOENT</code></td>
+                  <td>source was copied without Git metadata</td>
+                  <td>set <code>DSH_CLIENT_COMMIT_HASH</code> explicitly</td>
+                </tr>
+                <tr>
+                  <td>model transport failed</td>
+                  <td>guest had no path to the cloud API</td>
+                  <td>allowlist DeepSeek through a host-side proxy</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">findings</p></div>
+
+          <ul class="findings">
+            <li>
+              <b>Firecracker runs cleanly on DGX Spark.</b> ARM64 plus working KVM was enough;
+              the native <code>aarch64</code> Firecracker release booted Ubuntu without an
+              emulation layer.
+            </li>
+            <li>
+              <b>Run the whole agent harness inside the VM.</b> This was simpler than trying to
+              integrate Firecracker into Harness's own sandbox abstraction and gives a much clearer
+              trust boundary.
+            </li>
+            <li>
+              <b>No default route is surprisingly practical.</b> The host can stage source,
+              runtimes, compilers, and package stores into the guest over a private TAP link.
+            </li>
+            <li>
+              <b>Native build steps should happen on the disposable side.</b> Copy package payloads;
+              do not move arbitrary dependency execution back onto the host just for convenience.
+            </li>
+            <li>
+              <b>Package-manager "offline" modes are not always literally network-silent.</b>
+              pnpm still attempted registry-backed supply-chain checks after the package payloads
+              were fully local.
+            </li>
+            <li>
+              <b>Network observability is part of the containment story.</b> Squid logs and
+              <code>tcpdump</code> made it obvious what Harness was actually trying to reach.
+            </li>
+            <li>
+              <b>The disposable image is the feature.</b> Node, compilers, Harness, target
+              workspaces, and anything the agent mutates can disappear with one ext4 file.
+            </li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">next experiment</p></div>
+
+          <p class="note">
+            The obvious next step is snapshot-driven agent testing. Build a clean guest once,
+            snapshot it before handing control to the agent, run a task, collect the filesystem
+            and network artifacts, then restore or destroy the VM.
+          </p>
+
+          <div class="flow">
+<pre>clean microVM
+     │
+     ▼
+pre-agent snapshot
+     │
+     ▼
+copy target workspace
+     │
+     ▼
+run DeepSeek Harness
+     │
+     ├── model API only
+     ├── observe network
+     └── observe filesystem
+     │
+     ▼
+collect artifacts
+     │
+     ▼
+destroy / restore</pre>
+          </div>
+
+          <p class="note">
+            The expensive intelligence does not need to live inside the microVM. A local model can
+            stay on the Spark host and expose only an API to the guest. The part that gets to
+            execute arbitrary commands is the part I want to be disposable.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-header"><p class="label">references</p></div>
+          <div class="refs">
+            <a href="https://github.com/deepseek-ai/deepseek-harness">github.com/deepseek-ai/deepseek-harness</a>
+            <a href="https://github.com/firecracker-microvm/firecracker">github.com/firecracker-microvm/firecracker</a>
+            <a href="https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md">Firecracker getting started</a>
+            <a href="https://api-docs.deepseek.com/">DeepSeek API docs</a>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer__inner">
+        <span>© 2026 Sagar Pandita</span>
+      </div>
+    </footer>
+  </body>
+</html>
